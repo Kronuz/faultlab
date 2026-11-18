@@ -125,7 +125,12 @@ void build(int which, Filesystem& fs) {
 				handles.push_back(io.create_exclusive(live.back()));
 			} else if (pick < 5) {
 				auto& h = handles[rng() % handles.size()];
-				h->write_at(rng() % 2000, bytes(1 + rng() % 1200, char('A' + rng() % 26)));
+				// One draw per statement: argument evaluation order is unspecified (gcc on x86_64
+				// draws right to left), and the table needs one order on every platform.
+				const auto offset = rng() % 2000;
+				const auto length = 1 + rng() % 1200;
+				const char fill = char('A' + rng() % 26);
+				h->write_at(offset, bytes(length, fill));
 			} else if (pick < 6) {
 				handles[rng() % handles.size()]->sync();
 			} else if (pick < 7) {
