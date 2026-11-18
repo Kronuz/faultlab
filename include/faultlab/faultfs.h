@@ -41,6 +41,11 @@
 
 #include "completion/io.h"
 
+// 1 (the tests) checks the reference counts and used() against a full recount at every collection.
+#ifndef FAULTLAB_CHECK_COUNTS
+#define FAULTLAB_CHECK_COUNTS 0
+#endif
+
 #include <unistd.h>
 
 #include <algorithm>
@@ -61,7 +66,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace kronuz::faultlab {
@@ -118,6 +123,9 @@ struct inode {
 	// these sectors so (io.h promises mapped stores no durability on macOS); an ordering point or a
 	// write_at over the whole sector ends it.
 	std::map<std::uint64_t, std::string> unmapped;
+	std::uint64_t links = 0;  // the current names naming it
+	std::uint64_t refs = 0;  // the current names, durable names and logged ops naming it
+	std::uint64_t counted = 0;  // its share of filesystem::used(), as last accounted
 
 	// What a flush makes durable: the current bytes, the lost pages keeping their durable ones
 	// (zeros past the durable size).
@@ -203,6 +211,8 @@ struct inode {
 		staged.clear();
 		dirty = flushed() != durable;
 	}
+	// The bytes it holds against the capacity.
+	std::uint64_t footprint() const { return std::max({current.size(), durable.size(), std::size_t(reserved)}); }
 	// A write or truncate dirties the pages from `begin` up to `end`.
 	void touch(std::uint64_t begin, std::uint64_t end) {
 		if (lost.empty() || end <= begin) { return; }
@@ -422,6 +432,7 @@ private:
 	friend struct detail::crash_access;
 	friend struct detail::model_access;
 
+	using name_map = std::map<std::string, std::uint64_t>;
 	struct logged {
 		op kind;
 		std::string a, b;
@@ -453,9 +464,8 @@ private:
 		return nullptr;
 	}
 	std::uint64_t used_locked() const {
-		std::uint64_t n = 0;
-		for (const auto& [_, node] : inodes_) { n += std::max({node->current.size(), node->durable.size(), std::size_t(node->reserved)}); }
-		return n;
+		check_counts();
+		return used_;
 	}
 	bool directory_exists(std::string_view path) const { return path.empty() || directories_.count(std::string(path)) != 0; }
 	std::vector<std::string> entries(std::string_view directory) const {
@@ -470,25 +480,95 @@ private:
 		return out;
 	}
 	std::uint64_t links_of(std::uint64_t id) const {
-		std::uint64_t n = 0;
-		for (const auto& [_, i] : names_) { n += i == id; }
-		return n;
+		const auto it = inodes_.find(id);
+		return it == inodes_.end() ? 0 : it->second->links;
 	}
-	// Drops inodes no name, durable name or logged op references and no handle holds; one pass
-	// over each, so a call is linear in names + log + inodes.
-	void collect() {
-		std::unordered_set<std::uint64_t> referenced;
-		referenced.reserve(names_.size() + durable_names_.size() + log_.size());
-		for (const auto& [_, id] : names_) { referenced.insert(id); }
-		for (const auto& [_, id] : durable_names_) { referenced.insert(id); }
-		for (const auto& e : log_) { referenced.insert(e.id); }
-		for (auto it = inodes_.begin(); it != inodes_.end();) {
-			if (it->second.use_count() == 1 && !referenced.count(it->first)) {
-				it = inodes_.erase(it);
-			} else {
-				++it;
-			}
+	// Reference counts: each change to a namespace or the log counts the inodes it names, so an
+	// operation costs what it touches. An inode whose refs fall to zero waits in unreferenced_.
+	void ref(std::uint64_t id, bool link) {
+		auto& node = *inodes_.at(id);
+		++node.refs;
+		node.links += link;
+	}
+	void unref(std::uint64_t id, bool link) {
+		auto& node = *inodes_.at(id);
+		node.links -= link;
+		if (--node.refs == 0) { unreferenced_.insert(id); }
+	}
+	void set_name(name_map& names, const std::string& path, std::uint64_t id) {
+		const bool link = &names == &names_;
+		auto [it, fresh] = names.try_emplace(path, id);
+		if (!fresh) {
+			if (it->second == id) { return; }
+			unref(std::exchange(it->second, id), link);
 		}
+		ref(id, link);
+	}
+	void erase_name(name_map& names, name_map::iterator it) {
+		const std::uint64_t id = it->second;
+		names.erase(it);
+		unref(id, &names == &names_);
+	}
+	void log(logged e) {
+		ref(e.id, false);
+		log_.push_back(std::move(e));
+	}
+	// Brings `node`'s share of used() up to date after a call that may have resized it.
+	void account(detail::inode& node) {
+		used_ = used_ - node.counted + node.footprint();
+		node.counted = node.footprint();
+	}
+	// Rebuilds every count from the namespaces, the log and the inodes (after a crash, a settled
+	// ordering point or a copy, which change them wholesale).
+	void recount() {
+		for (auto& [id, node] : inodes_) { node->refs = node->links = 0; }
+		for (const auto& [_, id] : names_) { ref(id, true); }
+		for (const auto& [_, id] : durable_names_) { ref(id, false); }
+		for (const auto& e : log_) { ref(e.id, false); }
+		used_ = 0;
+		unreferenced_.clear();
+		for (auto& [id, node] : inodes_) {
+			node->counted = node->footprint();
+			used_ += node->counted;
+			if (node->refs == 0) { unreferenced_.insert(id); }
+		}
+	}
+	// Drops the inodes nothing references and no handle holds; one still held waits for a later call.
+	void collect() {
+		for (auto it = unreferenced_.begin(); it != unreferenced_.end();) {
+			const auto node = inodes_.find(*it);
+			const bool unreferenced = node != inodes_.end() && node->second->refs == 0;
+			if (unreferenced && node->second.use_count() > 1) {
+				++it;
+				continue;
+			}
+			if (unreferenced) {
+				used_ -= node->second->counted;
+				inodes_.erase(node);
+			}
+			it = unreferenced_.erase(it);
+		}
+		check_counts();
+	}
+	// FAULTLAB_CHECK_COUNTS: every count against a full recount, and no inode staged without an
+	// ordering point (settle_directory relies on it).
+	void check_counts() const {
+#if FAULTLAB_CHECK_COUNTS
+		std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> want;  // refs, links
+		for (const auto& [_, id] : names_) { ++want[id].first, ++want[id].second; }
+		for (const auto& [_, id] : durable_names_) { ++want[id].first; }
+		for (const auto& e : log_) { ++want[e.id].first; }
+		std::uint64_t used = 0;
+		for (const auto& [id, node] : inodes_) {
+			const auto w = want.count(id) ? want.at(id) : std::pair<std::uint64_t, std::uint64_t>{};
+			if (node->refs != w.first || node->links != w.second) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " miscounts its references"); }
+			if (node->refs == 0 && !unreferenced_.count(id)) { throw std::logic_error("faultfs: unreferenced inode " + std::to_string(id) + " not collectable"); }
+			if (node->counted != node->footprint()) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " unaccounted in used()"); }
+			if (marks_.empty() && !node->staged.empty()) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " staged without an ordering point"); }
+			used += node->footprint();
+		}
+		if (used != used_) { throw std::logic_error("faultfs: used() miscounted"); }
+#endif
 	}
 	void clear_marks() {
 		marks_.clear();
@@ -526,18 +606,38 @@ private:
 		for (std::size_t i = 0; i < marks_.back(); ++i) { apply(durable_names_, log_[i]); }
 		log_.erase(log_.begin(), log_.begin() + std::ptrdiff_t(marks_.back()));
 		clear_marks();
+		recount();
 	}
-	// sync_directory: what the ordering points staged, then `directory`'s namespace, durable.
+	// sync_directory: what the ordering points staged, then `directory`'s namespace, durable. Its
+	// durable names differ from its current ones only at the paths its logged ops touched.
 	void settle_directory(const std::string& directory) {
 		settle_staged();
-		std::erase_if(durable_names_, [&](const auto& entry) { return detail::parent(entry.first) == directory; });
-		for (const auto& [n, id] : names_) {
-			if (detail::parent(n) == directory) { durable_names_[n] = id; }
+		std::set<std::string> touched;
+		std::vector<std::uint64_t> dropped;
+		std::erase_if(log_, [&](const logged& e) {
+			if (detail::parent(e.a) != directory) { return false; }
+			touched.insert(e.a);
+			if (!e.b.empty()) { touched.insert(e.b); }
+			dropped.push_back(e.id);
+			return true;
+		});
+		for (const auto& path : touched) {
+			if (const auto now = names_.find(path); now != names_.end()) {
+				set_name(durable_names_, path, now->second);
+			} else if (const auto was = durable_names_.find(path); was != durable_names_.end()) {
+				erase_name(durable_names_, was);
+			}
 		}
-		std::erase_if(log_, [&](const logged& e) { return detail::parent(e.a) == directory; });
-		for (auto& [id, node] : inodes_) {
-			if (!node->staged.empty()) { node->settle(); }
+		for (const std::uint64_t id : dropped) { unref(id, false); }
+#if FAULTLAB_CHECK_COUNTS
+		for (const auto* m : {&names_, &durable_names_}) {
+			const auto* other = m == &names_ ? &durable_names_ : &names_;
+			for (const auto& [n, id] : *m) {
+				const auto it = other->find(n);
+				if (detail::parent(n) == directory && (it == other->end() || it->second != id)) { throw std::logic_error("faultfs: " + n + " not durable after its directory sync"); }
+			}
 		}
+#endif
 	}
 
 	// The coins a policy fixes.
@@ -664,6 +764,7 @@ private:
 		log_.clear();
 		clear_marks();
 		for (auto& [id, node] : inodes_) { node->staged.clear(); }
+		recount();
 		collect();
 		release();
 		power_left_.reset();
@@ -745,6 +846,7 @@ private:
 		calls_ = o.calls_;
 		syncs_ = o.syncs_;
 		power_left_ = o.power_left_;
+		recount();
 	}
 	void take(filesystem&& o) {
 		inodes_ = std::move(o.inodes_);
@@ -753,6 +855,8 @@ private:
 		directories_ = std::move(o.directories_);
 		log_ = std::move(o.log_);
 		marks_ = std::move(o.marks_);
+		unreferenced_ = std::move(o.unreferenced_);
+		used_ = o.used_;
 		rules_ = std::move(o.rules_);
 		media_ = std::move(o.media_);
 		shared_ = std::move(o.shared_);
@@ -779,10 +883,12 @@ private:
 
 	mutable std::mutex mu_;
 	std::map<std::uint64_t, std::shared_ptr<detail::inode>> inodes_;
-	std::map<std::string, std::uint64_t> names_, durable_names_;  // by path: "name" or "dir/name"
+	name_map names_, durable_names_;  // by path: "name" or "dir/name"
 	std::set<std::string> directories_;  // every directory but the root, durable at once
 	std::vector<logged> log_;
 	std::vector<std::size_t> marks_;  // per ordering point: log_ entries before it are staged ahead of those after
+	std::set<std::uint64_t> unreferenced_;  // inodes with no refs, freed once no handle holds them
+	std::uint64_t used_ = 0;  // every inode's footprint, as accounted
 	std::vector<rule> rules_;
 	struct media_rule {
 		std::shared_ptr<detail::inode> node;
@@ -878,6 +984,7 @@ public:
 	}
 	std::size_t write_at(std::uint64_t offset, std::string_view bytes) override {
 		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
 		enter();
 		if (read_only_) { detail::fail(EBADF, "faultfs write"); }
 		const fault* f = fs_->check(op::write);
@@ -885,7 +992,7 @@ public:
 		std::size_t n = bytes.size();
 		if (fs_->short_ && n > fs_->short_) { n = fs_->short_; }
 		const std::uint64_t end = offset + n;
-		const std::uint64_t held = std::max({node_->current.size(), node_->durable.size(), std::size_t(node_->reserved)});
+		const std::uint64_t held = node_->footprint();
 		if (end > held && fs_->used_locked() + (end - held) > fs_->capacity_) { detail::fail(ENOSPC, "faultfs write"); }
 		node_->note_write(fs_->marks_.size());
 		if (end > node_->current.size()) { node_->current.resize(end, '\0'); }
@@ -904,6 +1011,7 @@ public:
 	}
 	void truncate(std::uint64_t size) override {
 		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
 		enter();
 		if (read_only_) { detail::fail(EBADF, "faultfs truncate"); }
 		const fault* f = fs_->check(op::truncate);
@@ -925,12 +1033,13 @@ public:
 	void preallocate(std::uint64_t offset, std::uint64_t length) override {
 		if (length > ~std::uint64_t{0} - offset) { throw std::length_error("preallocation exceeds the file range"); }
 		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
 		enter();
 		if (read_only_) { detail::fail(EBADF, "faultfs preallocate"); }
 		const fault* f = fs_->check(op::preallocate);
 		if (f && !f->after) { detail::fail(f->error, "faultfs preallocate"); }
 		const std::uint64_t end = offset + length;
-		const std::uint64_t held = std::max({node_->current.size(), node_->durable.size(), std::size_t(node_->reserved)});
+		const std::uint64_t held = node_->footprint();
 		if (end > held && fs_->used_locked() + (end - held) > fs_->capacity_) { detail::fail(ENOSPC, "faultfs preallocate"); }
 		if (end > node_->current.size()) {
 			const std::uint64_t was = node_->current.size();
@@ -959,6 +1068,7 @@ public:
 	}
 	void sync() override {
 		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
 		enter();
 		if (const fault* f = fs_->check(op::sync)) {
 			if (f == &filesystem::power_off_) { detail::fail(f->error, "faultfs sync"); }
@@ -1011,10 +1121,17 @@ public:
 		closed_ = true;
 	}
 
+	// Re-accounts the file's share of used() when a call that may resize it ends, thrown or not.
+	struct accounted {
+		filesystem& fs;
+		detail::inode& node;
+		~accounted() { fs.account(node); }
+	};
 	// Stages the bytes ahead of later changes for ordering point `epoch` (see
 	// io::order_files_and_directory); durable at the next sync_directory.
 	void stage(std::size_t epoch) {
 		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
 		enter();
 		if (const fault* f = fs_->check(op::sync)) {
 			if (f != &filesystem::power_off_) {
@@ -1134,9 +1251,9 @@ public:
 		auto it = fs_->names_.find(path(source));
 		if (it == fs_->names_.end()) { detail::fail(ENOENT, "faultfs replace"); }
 		const std::uint64_t id = it->second;
-		fs_->names_.erase(it);
-		fs_->names_[path(destination)] = id;
-		fs_->log_.push_back({op::replace, path(source), path(destination), id});
+		fs_->log({op::replace, path(source), path(destination), id});
+		fs_->erase_name(fs_->names_, it);
+		fs_->set_name(fs_->names_, path(destination), id);
 		fs_->collect();
 		if (f) { detail::fail(f->error, "faultfs replace"); }
 	}
@@ -1153,8 +1270,8 @@ public:
 		if (it == fs_->names_.end()) { detail::fail(ENOENT, "faultfs link"); }
 		if (exists(destination)) { detail::fail(EEXIST, "faultfs link"); }
 		const std::uint64_t id = it->second;
-		fs_->names_[path(destination)] = id;
-		fs_->log_.push_back({op::link, path(source), path(destination), id});
+		fs_->set_name(fs_->names_, path(destination), id);
+		fs_->log({op::link, path(source), path(destination), id});
 		if (f) { detail::fail(f->error, "faultfs link"); }
 	}
 	// Missing names are an idempotent success; a directory fails with EPERM, as unlink does.
@@ -1166,8 +1283,8 @@ public:
 		if (f && !f->after) { detail::fail(f->error, "faultfs remove"); }
 		if (is_directory(name)) { detail::fail(EPERM, "faultfs remove of a directory"); }
 		if (auto it = fs_->names_.find(path(name)); it != fs_->names_.end()) {
-			fs_->log_.push_back({op::remove, path(name), {}, it->second});
-			fs_->names_.erase(it);
+			fs_->log({op::remove, path(name), {}, it->second});
+			fs_->erase_name(fs_->names_, it);
 			fs_->collect();
 		}
 		if (f) { detail::fail(f->error, "faultfs remove"); }
@@ -1307,8 +1424,8 @@ private:
 		auto node = std::make_shared<detail::inode>();
 		node->id = id;
 		fs_->inodes_[id] = node;
-		fs_->names_[path(name)] = id;
-		fs_->log_.push_back({op::create, path(name), {}, id});
+		fs_->set_name(fs_->names_, path(name), id);
+		fs_->log({op::create, path(name), {}, id});
 		return node;
 	}
 	filesystem* fs_;

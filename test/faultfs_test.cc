@@ -4,6 +4,9 @@
 // faultfs's additions over strata's model: directories (F4), kill, snapshot and powered_off (F6),
 // and the F7 members: link, try_lease, map_shared, preallocate, inspection and owner locks, with
 // the crash rules the design's build steps list for link, try_lease and map_shared.
+#ifndef FAULTLAB_CHECK_COUNTS
+#define FAULTLAB_CHECK_COUNTS 1  // every collection checks the counts against a full recount
+#endif
 #include "faultlab/faultfs.h"
 
 #include "check.h"
@@ -62,18 +65,25 @@ std::unique_ptr<j::File> referenced_inodes(ff::filesystem& fs) {
 	return h;
 }
 
-// Seconds per remove(), each one collect() over `n` named and durably named inodes; the best
-// of `rounds` rounds of `per` removes.
-double seconds_per_remove(std::size_t n, int rounds, int per) {
+// Seconds per publish over `n` live files, the best of `rounds` rounds of `per`: create, write,
+// sync, sync_directory, replace onto a live name, sync_directory (which frees the replaced inode).
+double seconds_per_publish(std::size_t n, int rounds, int per) {
 	ff::filesystem fs;
 	ff::io io(fs);
-	for (std::size_t i = 0; i < n; ++i) { io.create_exclusive("f" + std::to_string(i)); }
+	for (std::size_t i = 0; i < n; ++i) { io.create_exclusive("f" + std::to_string(i))->write_at(0, "x"); }
 	io.sync_directory();
 	double best = 1e9;
 	std::size_t next = 0;
 	for (int r = 0; r < rounds; ++r) {
 		const auto start = std::chrono::steady_clock::now();
-		for (int i = 0; i < per; ++i) { io.remove("f" + std::to_string(next++)); }
+		for (int i = 0; i < per; ++i, ++next) {
+			auto f = io.create_exclusive("pending");
+			f->write_at(0, bytes(100, 'p'));
+			f->sync();
+			io.sync_directory();
+			io.replace("pending", "f" + std::to_string(next % n));
+			io.sync_directory();
+		}
 		best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / per);
 	}
 	return best;
@@ -575,17 +585,19 @@ int main() {
 		CHECK(added.view("c") == "cccc");
 		CHECK(added.view("d/b") == "xxxxxxxx");
 	});
-	// FAULTLAB_COLLECT_SCALING=<max inodes> (e.g. 100000): seconds per collect() at 1K, 10K, ...;
-	// linear when each decade costs at most 2x per inode.
+	// FAULTLAB_COLLECT_SCALING=<max live files> (e.g. 100000), built with FAULTLAB_CHECK_COUNTS=0:
+	// seconds per publish at 1K, 10K, ...; an operation costs what it touches when each decade
+	// costs at most 2x.
 	if (const char* env = std::getenv("FAULTLAB_COLLECT_SCALING")) {
-		run("collect is linear in inodes", [env] {
+		run("an operation's cost is flat in the live inodes", [env] {
+			CHECK(!FAULTLAB_CHECK_COUNTS);  // the full recount would time the check
 			const std::size_t max = std::strtoull(env, nullptr, 10);
 			double before = 0;
 			for (std::size_t n = 1000; n <= max; n *= 10) {
-				const double per_inode = seconds_per_remove(n, 5, 8) / double(n);
-				std::printf("collect: %zu inodes: %.1f ns per inode per call\n", n, per_inode * 1e9);
-				if (before > 0) { CHECK(per_inode <= 2 * before); }
-				before = per_inode;
+				const double t = seconds_per_publish(n, 5, 64);
+				std::printf("publish: %zu live files: %.2f us per publish\n", n, t * 1e6);
+				if (before > 0) { CHECK(t <= 2 * before); }
+				before = t;
 			}
 		});
 	}
