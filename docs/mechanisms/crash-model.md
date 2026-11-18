@@ -20,9 +20,14 @@ epoch: each file's bytes as of that point are staged, and the namespace ops befo
 ahead of the ops after it.
 
 An inode lives while a current name, a durable name, a logged op or a handle references it. Each
-remove, replace, directory sync and crash collects the rest: it gathers the referenced ids once,
-then frees every inode outside them that no handle holds, so a call costs one pass over the names,
-the log and the inodes.
+inode counts those references: every change to a namespace or the log adjusts the inodes it names,
+and one whose count falls to zero waits in an unreferenced set. Each remove, replace, directory
+sync and crash collects that set, freeing what no handle holds. A directory sync makes durable only
+the paths its directory's logged ops touched, since its durable names differ from its current ones
+nowhere else, and `used()` is a running total each resizing call updates. So an operation costs
+what it touches, not the live inode count; a crash, a settled ordering point and a snapshot recount
+everything, as they rebuild it. Built with `FAULTLAB_CHECK_COUNTS=1`, as faultfs_test is, every
+collection checks the counts against a full recount and each directory sync its durable names.
 
 ## What `crash` draws, in order
 
