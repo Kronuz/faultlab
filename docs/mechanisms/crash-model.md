@@ -17,7 +17,9 @@ A write changes `current` and marks the file dirty. A file sync makes `durable =
 directory sync makes the directory's names durable and clears its log entries; it settles staged
 data device-wide first (ruling R2). An ordering point (`order_files_and_directory`) closes an
 epoch: each file's bytes as of that point are staged, and the namespace ops before it are ordered
-ahead of the ops after it.
+ahead of the ops after it. A file staged after another thread's directory sync already settled its
+point stays staged with no point; the next directory sync settles it. A replace onto its own name
+changes nothing, live, in replay or when settled.
 
 An inode lives while a current name, a durable name, a logged op or a handle references it. Each
 inode counts those references: every change to a namespace or the log adjusts the inodes it names,
