@@ -19,6 +19,11 @@ data device-wide first (ruling R2). An ordering point (`order_files_and_director
 epoch: each file's bytes as of that point are staged, and the namespace ops before it are ordered
 ahead of the ops after it.
 
+An inode lives while a current name, a durable name, a logged op or a handle references it. Each
+remove, replace, directory sync and crash collects the rest: it gathers the referenced ids once,
+then frees every inode outside them that no handle holds, so a call costs one pass over the names,
+the log and the inodes.
+
 ## What `crash` draws, in order
 
 1. **Epochs.** One coin per ordering point, in order, until the first lost one: the epochs before
