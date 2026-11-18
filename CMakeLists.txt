@@ -31,6 +31,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	endforeach()
 	target_include_directories(faultlab_sector_test PRIVATE "${journal_memory_io_SOURCE_DIR}/include")
 	file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.scratch")  # the tests' state
+	add_executable(faultlab_demo examples/demo.cc)
+	target_link_libraries(faultlab_demo PRIVATE faultlab::faultlab)
+	add_test(NAME faultlab_demo COMMAND faultlab_demo)
 
 	# The Python half's suites, isolated (python3 -I) as consumers run it.
 	find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)

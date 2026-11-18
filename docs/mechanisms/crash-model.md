@@ -1,0 +1,61 @@
+# How faultfs rebuilds a crash state
+
+faultfs models the durable sync contract of completion's `journal::IO`: what a sync, a directory
+sync and an ordering point promise, and nothing a particular filesystem adds. `crash(seed,
+policy)` picks one state that contract allows; the same seed and policy always pick the same one.
+
+## What the model keeps
+
+```
+inode:   current bytes   durable bytes   staged[epoch]   at_mark[epoch]   lost pages
+names:   current map path -> inode       durable map path -> inode
+log:     namespace ops since the last directory sync (create, replace, link, remove)
+marks:   ordering points: log entries before each are staged ahead of those after
+```
+
+A write changes `current` and marks the file dirty. A file sync makes `durable = current`. A
+directory sync makes the directory's names durable and clears its log entries; it settles staged
+data device-wide first (ruling R2). An ordering point (`order_files_and_directory`) closes an
+epoch: each file's bytes as of that point are staged, and the namespace ops before it are ordered
+ahead of the ops after it.
+
+## What `crash` draws, in order
+
+1. **Epochs.** One coin per ordering point, in order, until the first lost one: the epochs before
+   it survive whole (their staged bytes and namespace ops), nothing after it is ordered ahead.
+2. **Names.** The log replays in order; an entry inside a surviving epoch survives, a later one
+   by its own coin. A rename moves atomically. A `link` survives only when its source still names
+   the same inode and its target is free; a remove of an inode whose link was lost is dropped, and
+   a rename onto such an inode is dropped too, so no surviving name loses its last link (R1).
+3. **Size.** Per dirty file still reachable: the durable size or the current one by coin, or, with
+   `size_pick::sector`, one draw among the lower size, every 512-byte boundary between and the
+   higher size (R5).
+4. **Sectors.** Per 512-byte sector inside the size, a coin: the sector's old bytes or its new
+   ones. Past the durable size, new bytes or zeros (growth that persisted without its data).
+   Pages a failed sync with `keep` lost read their durable bytes again.
+
+A fixed pick draws its coin and discards it, so fixing one family never moves another's draws;
+only a size pick changes how many sector coins follow, because the loop runs over the size.
+
+## Shared mappings
+
+`map_shared` hands out a word buffer. Its stores reach the model when any later call folds it
+(every call on the file system folds first), and at `kill`, `snapshot` and `crash`. A sync or
+write refreshes live buffers from the model. So the model sees what a page cache would: the
+mapping's stores become file bytes, dirty until a sync, and a crash may tear them like any write.
+
+## The recorder
+
+`recorder` runs each call on a real IO and then on a shadow faultfs, and snapshots the shadow
+after each mutating primitive. A cut after event i is that snapshot crashed with a seed and a
+policy, or killed. `verify` compares the shadow's current names and bytes with the real
+directory, so a write or link that bypassed the seam fails the run. Mapped stores reach only the
+real file, so a mapped file verifies by length.
+
+## Why sector tears and not write tears
+
+The contract promises nothing about a write's atomicity, so faultfs tears per sector, the
+smallest unit a device writes atomically. journal's MemoryIO and storage's CrashIO tear at write
+boundaries over block appends, which `size_pick::sector` covers (A3). Unaligned CrashIO appends
+reach states no sector pick does, sizes at a write boundary inside a sector (R7); a consumer that
+needs them adds a write-boundary cut.
