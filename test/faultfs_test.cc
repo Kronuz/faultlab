@@ -8,7 +8,10 @@
 
 #include "check.h"
 
+#include <chrono>
+#include <cstdlib>
 #include <set>
+#include <string_view>
 
 namespace ff = kronuz::faultlab;
 namespace j = kronuz::journal;
@@ -22,6 +25,58 @@ std::string read_all(j::File& f) {
 	std::string out(f.size(), '\0');
 	f.read_at(0, out);
 	return out;
+}
+
+// One inode of each kind collect() must tell apart, each `size` a distinct power of two so
+// used() names the surviving set: A named, B named only durably, C named only by the log, X
+// named over B, Z unreferenced, H held only by the returned handle, L named by its second link.
+std::unique_ptr<j::File> referenced_inodes(ff::filesystem& fs) {
+	for (const char* d : {"d", "e", "g", "s"}) { fs.make_directory(d); }
+	ff::io root(fs), d(fs, "d"), e(fs, "e"), g(fs, "g"), s(fs, "s");
+	auto make = [](ff::io& at, std::string_view name, std::size_t size) {
+		auto f = at.create_exclusive(name);
+		f->write_at(0, bytes(size, name[0]));
+		f->sync();
+		return f;
+	};
+	make(root, "a", 1);
+	make(d, "b", 2);
+	d.sync_directory();
+	make(d, "x", 8);
+	d.replace("x", "b");
+	make(root, "c", 4);
+	root.remove("c");
+	make(e, "z", 16);
+	e.sync_directory();
+	e.remove("z");
+	e.sync_directory();
+	auto h = make(g, "h", 32);
+	g.sync_directory();
+	g.remove("h");
+	g.sync_directory();
+	make(s, "l", 64);
+	s.link("l", "m");
+	s.sync_directory();
+	s.remove("l");
+	s.sync_directory();
+	return h;
+}
+
+// Seconds per remove(), each one collect() over `n` named and durably named inodes; the best
+// of `rounds` rounds of `per` removes.
+double seconds_per_remove(std::size_t n, int rounds, int per) {
+	ff::filesystem fs;
+	ff::io io(fs);
+	for (std::size_t i = 0; i < n; ++i) { io.create_exclusive("f" + std::to_string(i)); }
+	io.sync_directory();
+	double best = 1e9;
+	std::size_t next = 0;
+	for (int r = 0; r < rounds; ++r) {
+		const auto start = std::chrono::steady_clock::now();
+		for (int i = 0; i < per; ++i) { io.remove("f" + std::to_string(next++)); }
+		best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / per);
+	}
+	return best;
 }
 
 }  // namespace
@@ -498,5 +553,41 @@ int main() {
 		m->words()[1] = 'Q';
 		CHECK(fs.view("f") == stored);
 	});
+	run("collect frees exactly the inodes nothing references", [] {
+		ff::filesystem fs;
+		auto h = referenced_inodes(fs);
+		CHECK(fs.used() == 1 + 2 + 4 + 8 + 32 + 64);  // all but Z
+		h.reset();
+		ff::io(fs, "s").sync_directory();  // collects H, now unheld
+		CHECK(fs.used() == 1 + 2 + 4 + 8 + 64);
+		CHECK(fs.view("d/b") == "xxxxxxxx");
+		CHECK(fs.view("s/m") == bytes(64, 'l'));
+		// A crash to the durable names finds B under d/b; one keeping the logged creates finds C.
+		ff::filesystem durable;
+		referenced_inodes(durable);
+		durable.crash(0, {.names = ff::name_pick::durable});
+		CHECK(durable.used() == 2 + 64);
+		CHECK(durable.view("d/b") == "bb");
+		ff::filesystem added;
+		referenced_inodes(added);
+		added.crash(0, {.names = ff::name_pick::additions});
+		CHECK(added.used() == 1 + 4 + 8 + 64);
+		CHECK(added.view("c") == "cccc");
+		CHECK(added.view("d/b") == "xxxxxxxx");
+	});
+	// FAULTLAB_COLLECT_SCALING=<max inodes> (e.g. 100000): seconds per collect() at 1K, 10K, ...;
+	// linear when each decade costs at most 2x per inode.
+	if (const char* env = std::getenv("FAULTLAB_COLLECT_SCALING")) {
+		run("collect is linear in inodes", [env] {
+			const std::size_t max = std::strtoull(env, nullptr, 10);
+			double before = 0;
+			for (std::size_t n = 1000; n <= max; n *= 10) {
+				const double per_inode = seconds_per_remove(n, 5, 8) / double(n);
+				std::printf("collect: %zu inodes: %.1f ns per inode per call\n", n, per_inode * 1e9);
+				if (before > 0) { CHECK(per_inode <= 2 * before); }
+				before = per_inode;
+			}
+		});
+	}
 	return faultlab_test::verdict();
 }

@@ -61,6 +61,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 namespace kronuz::faultlab {
@@ -473,14 +474,16 @@ private:
 		for (const auto& [_, i] : names_) { n += i == id; }
 		return n;
 	}
-	// Drops inodes no namespace names and no handle holds.
+	// Drops inodes no name, durable name or logged op references and no handle holds; one pass
+	// over each, so a call is linear in names + log + inodes.
 	void collect() {
+		std::unordered_set<std::uint64_t> referenced;
+		referenced.reserve(names_.size() + durable_names_.size() + log_.size());
+		for (const auto& [_, id] : names_) { referenced.insert(id); }
+		for (const auto& [_, id] : durable_names_) { referenced.insert(id); }
+		for (const auto& e : log_) { referenced.insert(e.id); }
 		for (auto it = inodes_.begin(); it != inodes_.end();) {
-			bool named = false;
-			for (const auto& [_, id] : names_) { named = named || id == it->first; }
-			for (const auto& [_, id] : durable_names_) { named = named || id == it->first; }
-			for (const auto& e : log_) { named = named || e.id == it->first; }
-			if (!named && it->second.use_count() == 1) {
+			if (it->second.use_count() == 1 && !referenced.count(it->first)) {
 				it = inodes_.erase(it);
 			} else {
 				++it;
