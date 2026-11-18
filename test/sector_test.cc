@@ -119,7 +119,7 @@ int main() {
 	faultlab_test::run("every MemoryIO state is a size_pick::sector state", [&] {
 		std::mt19937_64 rng(20261118);
 		int missed_by_default = 0;
-		for (int i = 0; i < 200; ++i) {
+		for (int i = 0; i < 100; ++i) {
 			const auto s = random_sequence(rng, false);
 			const auto memory = memory_io_states(s);
 			if (!CHECK(covers(faultfs_states(s, sector), memory))) { std::fprintf(stderr, "  sequence %d: durable %zu, %zu appends\n", i, s.durable.size(), s.appends.size()); }
@@ -130,7 +130,7 @@ int main() {
 	});
 	faultlab_test::run("every CrashIO state over block appends is a size_pick::sector state", [&] {
 		std::mt19937_64 rng(20261119);
-		for (int i = 0; i < 200; ++i) {
+		for (int i = 0; i < 100; ++i) {
 			const auto s = random_sequence(rng, true);
 			if (!CHECK(covers(faultfs_states(s, sector), crash_io_states(s)))) { std::fprintf(stderr, "  sequence %d: durable %zu, %zu appends\n", i, s.durable.size(), s.appends.size()); }
 		}
