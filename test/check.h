@@ -45,8 +45,8 @@ inline int verdict() {
 
 #define CHECK(cond) ::faultlab_test::check(static_cast<bool>(cond), #cond, __FILE__, __LINE__)
 
-// Passes when `expr` throws std::system_error with `code`.
-#define CHECK_ERRNO(expr, code)                                                     \
+// Passes when `expr` throws std::system_error with `error`.
+#define CHECK_ERRNO(expr, error)                                                     \
 	do {                                                                            \
 		int caught_ = 0;                                                            \
 		try {                                                                       \
@@ -54,5 +54,5 @@ inline int verdict() {
 		} catch (const std::system_error& e_) {                                     \
 			caught_ = e_.code().value();                                            \
 		}                                                                           \
-		::faultlab_test::check(caught_ == (code), #expr " fails with " #code, __FILE__, __LINE__); \
+		::faultlab_test::check(caught_ == (error), #expr " fails with " #error, __FILE__, __LINE__); \
 	} while (0)
