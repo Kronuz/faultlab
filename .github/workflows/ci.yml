@@ -1,0 +1,17 @@
+name: CI
+on:
+  push:
+    branches: [main, master, 'quest/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      nightly: { type: boolean, default: false }
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    uses: Kronuz/cpp-libraries/.github/workflows/cmake.yml@main
+    with:
+      nightly: ${{ inputs.nightly || false }}
+      freebsd_packages: python312  # the Python half's suites run under ctest
