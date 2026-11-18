@@ -30,4 +30,22 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 		set_tests_properties(faultlab_${t} PROPERTIES TIMEOUT 300)
 	endforeach()
 	target_include_directories(faultlab_sector_test PRIVATE "${journal_memory_io_SOURCE_DIR}/include")
+	file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.scratch")  # the tests' state
+
+	# The Python half's suites, isolated (python3 -I) as consumers run it.
+	find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+	foreach(t selftest proxy_test scenario_test)
+		add_test(NAME faultlab_py_${t} COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/${t}.py")
+		set_tests_properties(faultlab_py_${t} PROPERTIES TIMEOUT 600)
+	endforeach()
+	# The C++ event log, read by the Python checker: a clean history passes, a stale read fails
+	# and prints its replay line.
+	set(log "${CMAKE_CURRENT_BINARY_DIR}/.scratch/events_check")
+	add_test(NAME faultlab_events_write COMMAND faultlab_events_test "${log}.jsonl")
+	add_test(NAME faultlab_events_write_stale COMMAND faultlab_events_test "${log}_stale.jsonl" stale)
+	set_tests_properties(faultlab_events_write faultlab_events_write_stale PROPERTIES FIXTURES_SETUP events_logs)
+	add_test(NAME faultlab_events_check COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/python/faultlab/history.py" "${log}.jsonl")
+	add_test(NAME faultlab_events_check_stale COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/python/faultlab/history.py" "${log}_stale.jsonl")
+	set_tests_properties(faultlab_events_check faultlab_events_check_stale PROPERTIES FIXTURES_REQUIRED events_logs)
+	set_tests_properties(faultlab_events_check_stale PROPERTIES PASS_REGULAR_EXPRESSION "faults inside: partition.*replay: FAULTLAB_SCENARIO='faultlab/1 name=events seed=3'")
 endif()

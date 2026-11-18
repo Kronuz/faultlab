@@ -28,8 +28,9 @@ ff::scenario scenario() {
 	return s;
 }
 
-// A register history with one partition: a write, a read of it, and a write that failed.
-void history(ff::event_log& log) {
+// A register history with one partition: a write, a read of it, and a write that failed. A stale
+// one then reads the first value after a newer write completed, during a second partition.
+void history(ff::event_log& log, bool stale = false) {
 	auto op = [&](const char* client, const char* kind, ff::json_value value, const char* level, const char* outcome, double time) {
 		log.record({client, kind, "k", std::move(value), level, outcome, time, "n1", 1, false});
 	};
@@ -42,14 +43,21 @@ void history(ff::event_log& log) {
 	op("w", "write", std::string("v2"), "quorum", "invoke", 3.5);
 	op("w", "write", std::string("v2"), "quorum", "fail", 4.0);
 	log.fault("heal", 5.0);
+	if (stale) {
+		op("w", "write", std::string("v3"), "quorum", "invoke", 6.0);
+		op("w", "write", std::string("v3"), "quorum", "ok", 7.0);
+		log.fault("partition", 7.5, {{"nodes", std::vector<std::string>{"n1", "n3"}}});
+		op("r", "get", nullptr, "linearizable", "invoke", 8.0);
+		op("r", "get", std::string("v1"), "linearizable", "ok", 9.0);
+	}
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-	if (argc == 2) {
+	if (argc >= 2) {
 		ff::event_log log(argv[1], scenario());
-		history(log);
+		history(log, argc == 3 && std::string_view(argv[2]) == "stale");
 		return 0;
 	}
 	using faultlab_test::run;

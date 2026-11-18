@@ -1,0 +1,4 @@
+preset = "strict"
+project-includes = ["faultlab/*.py", "tests/*.py"]
+python-interpreter-path = "/usr/local/bin/python3"
+search-path = ["."]
