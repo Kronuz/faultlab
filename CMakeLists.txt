@@ -40,7 +40,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
 	# The Python half's suites, isolated (python3 -I) as consumers run it.
 	find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
-	foreach(t selftest proxy_test scenario_test netlab_test)
+	foreach(t selftest proxy_test scenario_test netlab_test disklab_test)
 		add_test(NAME faultlab_py_${t} COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/${t}.py")
 		set_tests_properties(faultlab_py_${t} PROPERTIES TIMEOUT 600)
 	endforeach()
