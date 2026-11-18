@@ -204,6 +204,7 @@ enum class coin_site { epoch, name, size, sector };
 // A forced coin's value, or nullopt to keep the flip; `kind` is the logged op at a name coin.
 using coin_force = std::function<std::optional<bool>(coin_site, op kind)>;
 struct crash_access;
+struct model_access;
 
 }  // namespace detail
 
@@ -380,6 +381,7 @@ private:
 	friend class io;
 	friend class file;
 	friend struct detail::crash_access;
+	friend struct detail::model_access;
 
 	struct logged {
 		op kind;
@@ -765,6 +767,22 @@ struct crash_access {
 	static void crash(filesystem& fs, std::uint64_t seed, const coin_force& force, bool sector_size = false) {
 		std::lock_guard lock(fs.mu_);
 		fs.rebuild(seed, force, sector_size);
+	}
+};
+
+// The recorder's view of a model: every directory and every file's current bytes, by path.
+struct model_access {
+	static std::set<std::string> directories(const filesystem& fs) {
+		std::lock_guard lock(fs.mu_);
+		fs.fold_locked();
+		return fs.directories_;
+	}
+	static std::map<std::string, std::string> files(const filesystem& fs) {
+		std::lock_guard lock(fs.mu_);
+		fs.fold_locked();
+		std::map<std::string, std::string> out;
+		for (const auto& [path, id] : fs.names_) { out[path] = fs.inodes_.at(id)->current; }
+		return out;
 	}
 };
 

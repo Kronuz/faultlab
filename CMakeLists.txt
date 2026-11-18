@@ -22,7 +22,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	# only (SOURCE_SUBDIR names no CMakeLists, so journal's build is not added).
 	FetchContent_Declare(journal_memory_io GIT_REPOSITORY https://github.com/Kronuz/journal.git GIT_TAG a412175fe437b59463bcaa97ebc75429643bdc65 SOURCE_SUBDIR faultlab-headers-only)
 	FetchContent_MakeAvailable(journal_memory_io)
-	set(FAULTLAB_TESTS faultfs policy seeds sector)
+	set(FAULTLAB_TESTS faultfs policy seeds sector recorder)
 	foreach(t ${FAULTLAB_TESTS})
 		add_executable(faultlab_${t}_test test/${t}_test.cc)
 		target_link_libraries(faultlab_${t}_test PRIVATE faultlab::faultlab)
