@@ -34,15 +34,23 @@ ahead of the ops after it.
    ones. Past the durable size, new bytes or zeros (growth that persisted without its data).
    Pages a failed sync with `keep` lost read their durable bytes again.
 
-A fixed pick draws its coin and discards it, so fixing one family never moves another's draws;
-only a size pick changes how many sector coins follow, because the loop runs over the size.
+A fixed pick draws its coin and discards it, so it keeps the stream; only a size or epoch pick
+changes how many coins follow, because the sector loop runs to the size and the epoch loop stops at
+the first lost epoch.
 
 ## Shared mappings
 
 `map_shared` hands out a word buffer. Its stores reach the model when any later call folds it
 (every call on the file system folds first), and at `kill`, `snapshot` and `crash`. A sync or
 write refreshes live buffers from the model. So the model sees what a page cache would: the
-mapping's stores become file bytes, dirty until a sync, and a crash may tear them like any write.
+mapping's stores become file bytes, and a crash may tear them like any write.
+
+io.h promises mapped stores no durability on macOS, so `File::sync` does not make them durable:
+each sector a store changed keeps its bytes without the stores as its durable bytes, and a crash
+tears it until a `write_at` over the whole sector or an ordering point that stages the file (the
+design orders stores as writes made there). A consumer that relies on `sync` for mapped words
+fails here. Once the power is off, a fold applies nothing: a store made after the cut never
+survives.
 
 ## The recorder
 

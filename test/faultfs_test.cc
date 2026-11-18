@@ -392,6 +392,81 @@ int main() {
 		CHECK(torn);
 		CHECK(seen.size() > 8);
 	});
+	run("map_shared: a store made after the power cut never survives a crash", [] {
+		for (const bool by_eio : {false, true}) {
+			ff::filesystem fs;
+			ff::io io(fs);
+			auto f = io.create_exclusive("f");
+			f->write_at(0, bytes(1024, 'a'));
+			f->sync();
+			io.sync_directory();
+			auto m = f->map_shared(1024);
+			fs.power_off_after(0);
+			if (by_eio) { CHECK_ERRNO(f->write_at(100, "W"), EIO); }  // the program sees the cut first
+			m->words()[700] = 'S';
+			f->size();  // a call folds
+			CHECK(fs.view("f")[700] == 'a');
+			fs.crash(1, {.sectors = ff::sector_pick::fresh});
+			CHECK(fs.view("f")[700] == 'a');
+			CHECK(fs.view("f")[100] == 'a');
+		}
+	});
+	run("map_shared: File::sync leaves a mapped sector tearable; a write over it or an ordering point ends that", [] {
+		auto run_case = [](int how, ff::crash_policy policy, std::uint64_t seed) {
+			ff::filesystem fs;
+			ff::io io(fs);
+			auto f = io.create_exclusive("f");
+			f->write_at(0, bytes(2048, 'a'));
+			f->sync();
+			io.sync_directory();
+			auto m = f->map_shared(2048);
+			m->words()[700] = 'S';   // sector 1
+			m->words()[1100] = 'T';  // sector 2
+			if (how == 1) { f->write_at(512, bytes(512, 'w')); }  // rewrites sector 1 whole
+			if (how == 2) { f->write_at(1000, "P"); }  // a partial write into sector 1
+			if (how == 3) {
+				j::File* files[] = {f.get()};
+				io.order_files_and_directory(files);
+				io.sync_directory();
+			}
+			f->sync();
+			fs.crash(seed, policy);
+			return std::string(fs.view("f"));
+		};
+		const ff::crash_policy old{.sectors = ff::sector_pick::old}, fresh{.sectors = ff::sector_pick::fresh};
+		auto lost = run_case(0, old, 1);
+		CHECK(lost[700] == 'a' && lost[1100] == 'a');  // synced, yet both stores lost
+		auto kept = run_case(0, fresh, 1);
+		CHECK(kept[700] == 'S' && kept[1100] == 'T');
+		std::set<std::string> seen;
+		for (std::uint64_t seed = 0; seed < 64; ++seed) { seen.insert(run_case(0, {}, seed).substr(512, 1024)); }
+		CHECK(seen.size() == 4);  // each sector by its own coin
+		auto rewritten = run_case(1, old, 1);
+		CHECK(rewritten.substr(512, 512) == bytes(512, 'w') && rewritten[1100] == 'a');
+		auto partial = run_case(2, old, 1);
+		CHECK(partial[1000] == 'P' && partial[700] == 'a');  // the synced write stays, the store does not
+		auto ordered = run_case(3, old, 1);
+		CHECK(ordered[700] == 'S' && ordered[1100] == 'T');  // ordered as writes, then settled
+	});
+	run("map_shared: a truncate cuts a mapped sector's unmapped bytes", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, bytes(1024, 'a'));
+		f->sync();
+		io.sync_directory();
+		{
+			auto m = f->map_shared(1024);
+			m->words()[600] = 'S';
+		}
+		f->truncate(520);
+		f->truncate(1024);  // regrows sector 1 with zeros
+		f->sync();
+		fs.crash(1, {.sectors = ff::sector_pick::old});
+		const auto state = std::string(fs.view("f"));
+		CHECK(state.size() == 1024);
+		CHECK(state.substr(512, 8) == bytes(8, 'a') && state.substr(520) == std::string(504, '\0'));
+	});
 	run("map_shared: stores before power off can survive a crash; a kill keeps every word", [] {
 		bool kept = false;
 		for (std::uint64_t seed = 0; seed < 64; ++seed) {

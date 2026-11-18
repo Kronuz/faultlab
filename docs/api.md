@@ -31,7 +31,7 @@ The model: an in-memory device holding a root directory and its subdirectories. 
 ### `crash_policy`
 
 Each field fixes one family of coins; `coin` (the default) flips it. A fixed pick still draws and
-discards its coin, so the other families see the stream they always did.
+discards its coin, so it keeps the stream, except as below.
 
 | Field | Picks | Fixed meaning |
 |---|---|---|
@@ -40,8 +40,9 @@ discards its coin, so the other families see the stream they always did.
 | `size` | `coin`, `durable`, `current`, `sector` | Each dirty file's size: the old one, the new one, or any sector boundary between (one draw). |
 | `sectors` | `coin`, `old`, `fresh` | Each unsynced 512-byte sector's bytes: old, or new. |
 
-`size_pick` changes how many sector coins follow (their count depends on the size), so a size
-pick moves the sector bytes the seed draws; `sector_pick` and `name_pick` leave sizes alone.
+A size pick changes how many sector coins follow (their count depends on the size) and an epoch
+pick how many epoch coins are drawn (the loop stops at the first lost epoch), so either moves the
+later draws; `sector_pick` and `name_pick` keep the stream.
 
 ### `io` and `file`
 
@@ -56,7 +57,7 @@ when it is missing); its files are `journal::File`s. The whole seam is modeled:
   the ordering point that stages each file ahead of later changes.
 - `preallocate` (a mutation; reserves space), `map` (read-only, with `map_files`),
   `map_shared` (`EACCES` read-only, `EINVAL` past the end; its stores reach the model when a call
-  folds them), `try_lease` (shared leases coexist, an exclusive one excludes), `inspect`.
+  folds them, nothing once the power is off, and `File::sync` leaves them tearable), `try_lease` (shared leases coexist, an exclusive one excludes), `inspect`.
 - Owner locks, file and directory, every mode: `EWOULDBLOCK` when held, `EEXIST` and `ENOENT` as
   the options ask. A crash or kill releases them.
 

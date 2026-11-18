@@ -95,6 +95,8 @@ def parse(line: str) -> Scenario:
             raise ScenarioError(f"not key=value: {word}")
         if not value:
             raise ScenarioError(f"empty {key}")
+        if "=" in value:
+            raise ScenarioError(f"'=' inside {key}")  # line() could not print it back
         if key in seen:
             raise ScenarioError(f"{key} twice")
         seen[key] = value

@@ -48,6 +48,8 @@ def main() -> int:
         "faultlab/1 name=x seed=1 pick=all,all,all",
         "faultlab/1 name=x seed=1 pick=all,all,all,new",
         "faultlab/1 name=x seed=1 loose",
+        "faultlab/1 name=x seed=1 k=a=b",
+        "faultlab/1 name=a=b seed=1",
     ]
     results.append(("malformed lines are refused", all(refused(line) for line in bad)))
     os.environ.pop("FAULTLAB_SCENARIO", None)

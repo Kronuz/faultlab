@@ -123,7 +123,9 @@ public:
 	}
 
 private:
+	// A JSON string; bytes that are not UTF-8 are refused, since the checker reads the log as UTF-8.
 	static void quote(std::string& out, std::string_view s) {
+		if (!utf8(s)) { throw std::invalid_argument("faultlab event log: a string that is not UTF-8"); }
 		out += '"';
 		for (unsigned char c : s) {
 			switch (c) {
@@ -143,6 +145,34 @@ private:
 			}
 		}
 		out += '"';
+	}
+	static bool utf8(std::string_view s) {
+		for (std::size_t i = 0; i < s.size();) {
+			const auto c = static_cast<unsigned char>(s[i]);
+			std::size_t n = 0;
+			std::uint32_t cp = 0, min = 0;
+			if (c < 0x80) {
+				++i;
+				continue;
+			} else if ((c & 0xe0) == 0xc0) {
+				n = 1, cp = c & 0x1f, min = 0x80;
+			} else if ((c & 0xf0) == 0xe0) {
+				n = 2, cp = c & 0x0f, min = 0x800;
+			} else if ((c & 0xf8) == 0xf0) {
+				n = 3, cp = c & 0x07, min = 0x10000;
+			} else {
+				return false;
+			}
+			if (n >= s.size() - i) { return false; }  // truncated
+			for (std::size_t k = 1; k <= n; ++k) {
+				const auto d = static_cast<unsigned char>(s[i + k]);
+				if ((d & 0xc0) != 0x80) { return false; }
+				cp = (cp << 6) | (d & 0x3f);
+			}
+			if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) { return false; }  // overlong, out of range, surrogate
+			i += n + 1;
+		}
+		return true;
 	}
 	static void encode(std::string& out, const json_value& v) {
 		if (std::holds_alternative<std::nullptr_t>(v)) {

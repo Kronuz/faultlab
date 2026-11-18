@@ -113,6 +113,10 @@ struct inode {
 	std::uint64_t reserved = 0;  // the extent preallocate reserved
 	std::set<std::uint64_t> lost;  // pages a failed sync left clean but not durable (fault::keep)
 	std::map<std::uint64_t, journal::LeaseMode> leases;  // by holding handle
+	// Per sector a shared mapping changed: its bytes without the mapped stores. File::sync leaves
+	// these sectors so (io.h promises mapped stores no durability on macOS); an ordering point or a
+	// write_at over the whole sector ends it.
+	std::map<std::uint64_t, std::string> unmapped;
 
 	// What a flush makes durable: the current bytes, the lost pages keeping their durable ones
 	// (zeros past the durable size).
@@ -122,6 +126,39 @@ struct inode {
 			for (std::uint64_t at = p * page; at < std::min<std::uint64_t>((p + 1) * page, out.size()); ++at) { out[at] = at < durable.size() ? durable[at] : '\0'; }
 		}
 		return out;
+	}
+	// What File::sync makes durable: the flushed bytes, each mapped sector without its stores.
+	std::string synced() const {
+		std::string out = flushed();
+		for (const auto& [s, bytes] : unmapped) {
+			const std::uint64_t at = s * sector;
+			if (at < out.size()) { std::memcpy(out.data() + at, bytes.data(), std::min<std::uint64_t>(bytes.size(), out.size() - at)); }
+		}
+		return out;
+	}
+	// A write_at over [begin, end) reaches the unmapped bytes of the sectors it overlaps; a write
+	// over a whole sector ends that sector's entry.
+	void overwrite_unmapped(std::uint64_t begin, std::uint64_t end) {
+		for (auto it = unmapped.lower_bound(begin / sector); it != unmapped.end() && it->first * sector < end;) {
+			const std::uint64_t at = it->first * sector;
+			if (begin <= at && at + sector <= end) {
+				it = unmapped.erase(it);
+				continue;
+			}
+			auto& bytes = it->second;
+			const std::uint64_t from = std::min<std::uint64_t>(std::max(begin, at), at + bytes.size());
+			const std::uint64_t to = std::min<std::uint64_t>({end, at + sector, current.size()});
+			if (to > at + bytes.size()) { bytes.resize(to - at); }
+			if (to > from) { std::memcpy(bytes.data() + (from - at), current.data() + from, to - from); }
+			++it;
+		}
+	}
+	// A truncate to `size` cuts the unmapped bytes with the file.
+	void truncate_unmapped(std::uint64_t size) {
+		unmapped.erase(unmapped.lower_bound((size + sector - 1) / sector), unmapped.end());
+		if (size % sector) {
+			if (auto it = unmapped.find(size / sector); it != unmapped.end()) { it->second.resize(std::min<std::uint64_t>(it->second.size(), size % sector)); }
+		}
 	}
 	// A failed sync with `keep`: every page that differs from the durable bytes is lost.
 	void lose_unsynced() {
@@ -156,6 +193,7 @@ struct inode {
 	void drop_unstaged() {
 		current = staged.empty() ? durable : staged.back().second;
 		lost.clear();
+		unmapped.clear();
 		dirty = current != durable;
 	}
 	// What the ordering points staged becomes durable; a write after them stays unsynced.
@@ -523,8 +561,9 @@ private:
 		};
 	}
 
-	// crash(): every coin is drawn from the seed's stream in the same order whatever the policy,
-	// and a forced coin replaces the drawn value, so a fixed pick changes only its own field.
+	// crash(): a forced coin is drawn and replaced, so a fixed pick keeps the stream; only a size or
+	// epoch pick changes how many coins follow (the sector loop runs to the size, the epoch loop
+	// stops at its first lost epoch).
 	void rebuild(std::uint64_t seed, const detail::coin_force& force, bool sector_size) {
 		fold_locked();
 		std::mt19937_64 rng(seed);
@@ -591,6 +630,7 @@ private:
 			node->lost.clear();
 			node->dirty = false;
 		}
+		for (auto& [id, node] : inodes_) { node->unmapped.clear(); }
 		// Namespace: the durable map plus a surviving subset of the logged ops, in order. Ops before
 		// the last whole epoch's mark survive, ops up to the first lost epoch's mark may, and later
 		// ones do not.
@@ -641,13 +681,16 @@ private:
 	void fold_locked() const {
 		for (auto* r : shared_) { fold(*r); }
 	}
+	// With the power off, a store reaches nothing: the cut is the instant the power ran out.
 	void fold(detail::shared_region& r) const {
+		if (power_left_ && *power_left_ == 0) { return; }
 		auto& node = *r.node;
 		const std::size_t end = std::min(r.words.size(), node.current.size());  // past the end, a store is lost
 		for (std::size_t at = 0; at < end; at += detail::sector) {
 			const std::size_t n = std::min(detail::sector, end - at);
 			if (std::memcmp(node.current.data() + at, r.words.data() + at, n) == 0) { continue; }
 			node.note_write(marks_.size());
+			node.unmapped.try_emplace(at / detail::sector, node.current.substr(at, n));
 			std::memcpy(node.current.data() + at, r.words.data() + at, n);
 			node.touch(at, at + n);
 			node.dirty = true;
@@ -850,6 +893,7 @@ public:
 			--fs_->damage_left_;
 			++fs_->damaged_;
 		}
+		node_->overwrite_unmapped(offset, end);
 		node_->dirty = true;
 		fs_->refresh(*node_, offset, end);
 		if (f) { detail::fail(f->error, "faultfs write"); }
@@ -867,6 +911,7 @@ public:
 		}
 		node_->note_write(fs_->marks_.size());
 		node_->current.resize(size, '\0');
+		node_->truncate_unmapped(size);
 		node_->touch(size, ~std::uint64_t(0));
 		node_->reserved = std::min(node_->reserved, size);
 		node_->dirty = true;
@@ -918,7 +963,7 @@ public:
 			// still the cached ones. One that failed after its effect flushed them, and what an
 			// ordering point staged before them.
 			if (f->after) {
-				node_->durable = node_->flushed();
+				node_->durable = node_->synced();
 				fs_->settle_staged();
 			}
 			if (f->keep && !f->after) {
@@ -930,8 +975,8 @@ public:
 			}
 			detail::fail(f->error, "faultfs sync");
 		}
-		node_->durable = node_->flushed();
-		node_->dirty = false;
+		node_->durable = node_->synced();
+		node_->dirty = !node_->unmapped.empty();
 		node_->staged.clear();
 		node_->at_mark.clear();
 		fs_->settle_staged();
@@ -976,6 +1021,7 @@ public:
 			detail::fail(f->error, "faultfs stage");
 		}
 		if (node_->dirty) { node_->staged.emplace_back(epoch, node_->flushed()); }
+		node_->unmapped.clear();  // the point orders the mapped stores as writes made here
 	}
 
 private:

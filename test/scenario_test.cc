@@ -61,6 +61,8 @@ int main() {
 		CHECK(refused("faultlab/1 name=x seed=1 pick=all,all,all,new"));
 		CHECK(refused("faultlab/1 name=x seed=1 loose"));
 		CHECK(refused("faultlab/1 name=x seed=1 k=1 k=2"));
+		CHECK(refused("faultlab/1 name=x seed=1 k=a=b"));
+		CHECK(refused("faultlab/1 name=a=b seed=1"));
 		ff::scenario bad;
 		bad.name = "two words";
 		bool threw = false;

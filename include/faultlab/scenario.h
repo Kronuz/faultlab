@@ -76,6 +76,7 @@ public:
 			if (eq == std::string_view::npos || eq == 0) { throw std::invalid_argument("faultlab scenario: not key=value: " + std::string(words[i])); }
 			const std::string key(words[i].substr(0, eq)), value(words[i].substr(eq + 1));
 			if (value.empty()) { throw std::invalid_argument("faultlab scenario: empty " + key); }
+			if (value.find('=') != std::string::npos) { throw std::invalid_argument("faultlab scenario: '=' inside " + key); }  // line() could not print it back
 			auto seen = [&](bool& flag) {
 				if (flag) { throw std::invalid_argument("faultlab scenario: " + key + " twice"); }
 				flag = true;

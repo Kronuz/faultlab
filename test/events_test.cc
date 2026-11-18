@@ -103,6 +103,10 @@ int main(int argc, char** argv) {
 			return false;
 		};
 		CHECK(refused([&] { log.fault("meteor", 0); }));
+		CHECK(ff::event_log::encode({{"k", std::string("caf\xc3\xa9 \xf0\x9f\x90\x8d")}}) == "{\"k\": \"caf\xc3\xa9 \xf0\x9f\x90\x8d\"}");  // UTF-8 passes raw
+		for (const char* bad : {"\xff", "caf\xc3", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\x80"}) {
+			CHECK(refused([&] { log.note("phase", {{"name", std::string(bad)}}); }));
+		}
 		CHECK(refused([&] { log.fault("kill", 0, {{"time", 1.0}}); }));
 		CHECK(refused([&] { log.note("phase", {{"kind", std::string("x")}}); }));
 		CHECK(refused([&] { log.record({"c", "delete", "k", nullptr, "quorum", "ok", 0, std::nullopt, std::nullopt, false}); }));
