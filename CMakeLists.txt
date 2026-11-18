@@ -7,8 +7,11 @@ project(faultlab LANGUAGES CXX)
 include(FetchContent)
 # completion's io.h: the File and IO seam faultfs implements, with preallocate, advise,
 # map_shared and link (the faultlab seam, completion:d8b538c).
-FetchContent_Declare(completion GIT_REPOSITORY https://github.com/Kronuz/completion.git GIT_TAG d8b538c6778f0a1b969e42c8428995d1d29d4731)
-FetchContent_MakeAvailable(completion)
+# A consumer that already defines completion (completion's own tests) keeps its own copy.
+if(NOT TARGET completion::completion)
+	FetchContent_Declare(completion GIT_REPOSITORY https://github.com/Kronuz/completion.git GIT_TAG d8b538c6778f0a1b969e42c8428995d1d29d4731)
+	FetchContent_MakeAvailable(completion)
+endif()
 
 add_library(faultlab INTERFACE)
 target_include_directories(faultlab INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
