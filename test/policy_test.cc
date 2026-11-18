@@ -131,6 +131,26 @@ int main() {
 		}
 	});
 
+	faultlab_test::run("a fixed pick leaves the other fields' choices to the seed", [&] {
+		// Sizes come from the size coins and names from the name coins, both drawn whatever the sector
+		// pick, so a sector pick moves neither. (A size pick changes how many sector coins follow.)
+		auto sizes = [](ff::filesystem& fs) {
+			std::vector<std::size_t> out;
+			for (const auto& n : fs.list()) { out.push_back(fs.view(n).size()); }
+			return out;
+		};
+		for (int s = 0; s < seed_scenarios::count; ++s) {
+			for (std::uint64_t seed = 0; seed < 32; ++seed) {
+				auto coin = bases[std::size_t(s)].snapshot(), fresh = bases[std::size_t(s)].snapshot(), old = bases[std::size_t(s)].snapshot();
+				coin.crash(seed);
+				fresh.crash(seed, {.sectors = ff::sector_pick::fresh});
+				old.crash(seed, {.sectors = ff::sector_pick::old});
+				CHECK(fresh.list() == coin.list() && sizes(fresh) == sizes(coin));
+				CHECK(old.list() == coin.list() && sizes(old) == sizes(coin));
+			}
+		}
+	});
+
 	// The picks' states, directly.
 	faultlab_test::run("size and sector picks keep the durable or the current bytes", [] {
 		const std::string d = bytes(1500, 'd');
