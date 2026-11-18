@@ -11,6 +11,7 @@
 
 #include "check.h"
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <set>
@@ -63,6 +64,80 @@ std::unique_ptr<j::File> referenced_inodes(ff::filesystem& fs) {
 	s.remove("l");
 	s.sync_directory();
 	return h;
+}
+
+// A File whose sync() runs `on_sync`: another thread's call between an ordering point's steps.
+struct hook final : j::File {
+	std::function<void()> on_sync;
+	std::uint64_t size() override { return 0; }
+	std::size_t read_at(std::uint64_t, std::span<char>) override { return 0; }
+	std::size_t write_at(std::uint64_t, std::string_view b) override { return b.size(); }
+	void truncate(std::uint64_t) override {}
+	void sync() override { on_sync(); }
+};
+
+// `steps` seeded random operations over three directories, crashes, faults and snapshots
+// included; returns how many times a FAULTLAB_CHECK_COUNTS check fired. That check holds every
+// count to a full recount and each synced directory's durable names to its live ones.
+int random_operations(std::uint64_t seed, int steps) {
+	std::mt19937_64 rng(seed);
+	auto pick = [&](std::uint64_t n) { return rng() % n; };
+	ff::filesystem fs(pick(3) == 0 ? 24000 : ~std::uint64_t(0));
+	fs.make_directory("d");
+	fs.make_directory("e");
+	const char* dirs[] = {"", "d", "e"};
+	std::vector<std::unique_ptr<j::File>> handles;
+	auto name = [&] { return std::string(1, char('a' + pick(4))); };
+	auto handle = [&]() -> j::File* { return handles.empty() ? nullptr : handles[pick(handles.size())].get(); };
+	int fired = 0;
+	for (int step = 0; step <= steps; ++step) {
+		ff::io io(fs, dirs[pick(3)]);
+		try {
+			switch (step == steps ? 20 : pick(20)) {
+			case 0: case 1: handles.push_back(io.create_exclusive(name())); break;
+			case 2: case 3:
+				if (auto* h = handle()) { h->write_at(pick(3000), std::string(pick(1500) + 1, char('A' + pick(26)))); }
+				break;
+			case 4: if (auto* h = handle()) { h->truncate(pick(4000)); } break;
+			case 5: if (auto* h = handle()) { h->preallocate(pick(3000), pick(3000) + 1); } break;
+			case 6: if (auto* h = handle()) { h->sync(); } break;
+			case 7: case 8: io.replace(name(), name()); break;
+			case 9: io.link(name(), name()); break;
+			case 10: io.remove(name()); break;
+			case 11: case 12: io.sync_directory(); break;
+			case 13: {
+				std::vector<j::File*> files;
+				for (auto& h : handles) {
+					if (pick(2)) { files.push_back(h.get()); }
+				}
+				io.order_files_and_directory(files);
+				break;
+			}
+			case 14: if (!handles.empty()) { handles.erase(handles.begin() + std::ptrdiff_t(pick(handles.size()))); } break;
+			case 15: handles.push_back(io.open_existing(name())); break;
+			case 16:
+				fs.crash(rng(), {ff::epoch_pick(pick(3)), ff::name_pick(pick(4)), ff::size_pick(pick(4)), ff::sector_pick(pick(3))});
+				if (pick(2)) { handles.clear(); }
+				break;
+			case 17: if (pick(2)) { fs.kill(); } else { fs.power_off_after(pick(6) + 1); } break;
+			case 18: {
+				const ff::op kinds[] = {ff::op::write, ff::op::sync, ff::op::sync_directory, ff::op::create, ff::op::replace, ff::op::remove, ff::op::truncate, ff::op::link, ff::op::preallocate};
+				fs.add_fault({kinds[pick(9)], pick(3) + 1, EIO, pick(2) == 0, pick(2) == 0});
+				break;
+			}
+			case 19: fs.snapshot().crash(rng()); break;
+			default:  // the end: down to the durable names, every handle released
+				fs.crash(seed, {.names = ff::name_pick::durable});
+				handles.clear();
+				ff::io(fs).sync_directory();
+			}
+		} catch (const std::logic_error& e) {
+			++fired;
+			std::fprintf(stderr, "seed %llu step %d: %s\n", static_cast<unsigned long long>(seed), step, e.what());
+		} catch (const std::exception&) {  // an injected fault, a missing name, a full device
+		}
+	}
+	return fired;
 }
 
 // Seconds per publish over `n` live files, the best of `rounds` rounds of `per`: create, write,
@@ -584,6 +659,46 @@ int main() {
 		CHECK(added.used() == 1 + 4 + 8 + 64);
 		CHECK(added.view("c") == "cccc");
 		CHECK(added.view("d/b") == "xxxxxxxx");
+	});
+	run("a self-replace stays durable across an ordering point and its directory's sync", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("a");
+		f->write_at(0, "aa");
+		f->sync();
+		f.reset();
+		io.sync_directory();
+		io.replace("a", "a");
+		ff::filesystem unsynced = fs.snapshot();
+		unsynced.crash(0, {.names = ff::name_pick::all});  // replaying the self-replace keeps the name
+		CHECK(unsynced.list() == names{"a"});
+		io.order_files_and_directory({});
+		io.sync_directory();
+		fs.crash(0, {.names = ff::name_pick::durable});
+		CHECK(fs.list() == names{"a"});
+		CHECK(fs.used() == 2);
+	});
+	run("an ordering point settled before its file stages: the next sync_directory settles the file", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, "old");
+		f->sync();
+		io.sync_directory();
+		f->write_at(0, "NEW");
+		hook h;
+		h.on_sync = [&] { io.sync_directory(); };  // settles the point before f stages
+		std::array<j::File*, 2> files{&h, f.get()};
+		io.order_files_and_directory(files);
+		io.sync_directory();
+		f.reset();
+		fs.crash(1, {.size = ff::size_pick::durable, .sectors = ff::sector_pick::old});
+		CHECK(fs.view("f") == "NEW");
+	});
+	run("random operations keep every count and each synced directory's names", [] {
+		int fired = 0;
+		for (std::uint64_t seed = 1; seed <= 200; ++seed) { fired += random_operations(seed, 250); }
+		CHECK(fired == 0);
 	});
 	// FAULTLAB_COLLECT_SCALING=<max live files> (e.g. 100000), built with FAULTLAB_CHECK_COUNTS=0:
 	// seconds per publish at 1K, 10K, ...; an operation costs what it touches when each decade

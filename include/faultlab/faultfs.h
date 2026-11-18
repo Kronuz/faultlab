@@ -551,7 +551,7 @@ private:
 		check_counts();
 	}
 	// FAULTLAB_CHECK_COUNTS: every count against a full recount, and no inode staged without an
-	// ordering point (settle_directory relies on it).
+	// ordering point unless strays_ lists it (settle_directory relies on it).
 	void check_counts() const {
 #if FAULTLAB_CHECK_COUNTS
 		std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> want;  // refs, links
@@ -564,7 +564,7 @@ private:
 			if (node->refs != w.first || node->links != w.second) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " miscounts its references"); }
 			if (node->refs == 0 && !unreferenced_.count(id)) { throw std::logic_error("faultfs: unreferenced inode " + std::to_string(id) + " not collectable"); }
 			if (node->counted != node->footprint()) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " unaccounted in used()"); }
-			if (marks_.empty() && !node->staged.empty()) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " staged without an ordering point"); }
+			if (marks_.empty() && !node->staged.empty() && !strays_.count(id)) { throw std::logic_error("faultfs: inode " + std::to_string(id) + " staged without an ordering point"); }
 			used += node->footprint();
 		}
 		if (used != used_) { throw std::logic_error("faultfs: used() miscounted"); }
@@ -580,8 +580,8 @@ private:
 		case op::create:
 			names.try_emplace(e.a, e.id);
 			break;
-		case op::replace:
-			if (auto it = names.find(e.a); it != names.end() && it->second == e.id) {
+		case op::replace:  // onto its own name: nothing changes
+			if (auto it = names.find(e.a); e.a != e.b && it != names.end() && it->second == e.id) {
 				names[e.b] = e.id;
 				names.erase(e.a);
 			}
@@ -606,12 +606,17 @@ private:
 		for (std::size_t i = 0; i < marks_.back(); ++i) { apply(durable_names_, log_[i]); }
 		log_.erase(log_.begin(), log_.begin() + std::ptrdiff_t(marks_.back()));
 		clear_marks();
+		strays_.clear();
 		recount();
 	}
 	// sync_directory: what the ordering points staged, then `directory`'s namespace, durable. Its
 	// durable names differ from its current ones only at the paths its logged ops touched.
 	void settle_directory(const std::string& directory) {
 		settle_staged();
+		for (const std::uint64_t id : strays_) {
+			if (auto it = inodes_.find(id); it != inodes_.end() && !it->second->staged.empty()) { it->second->settle(); }
+		}
+		strays_.clear();
 		std::set<std::string> touched;
 		std::vector<std::uint64_t> dropped;
 		std::erase_if(log_, [&](const logged& e) {
@@ -763,6 +768,7 @@ private:
 		durable_names_ = std::move(names);
 		log_.clear();
 		clear_marks();
+		strays_.clear();
 		for (auto& [id, node] : inodes_) { node->staged.clear(); }
 		recount();
 		collect();
@@ -823,6 +829,7 @@ private:
 		directories_ = o.directories_;
 		log_ = o.log_;
 		marks_ = o.marks_;
+		strays_ = o.strays_;
 		rules_ = o.rules_;
 		for (const auto& m : o.media_) {
 			auto c = m;
@@ -855,6 +862,7 @@ private:
 		directories_ = std::move(o.directories_);
 		log_ = std::move(o.log_);
 		marks_ = std::move(o.marks_);
+		strays_ = std::move(o.strays_);
 		unreferenced_ = std::move(o.unreferenced_);
 		used_ = o.used_;
 		rules_ = std::move(o.rules_);
@@ -887,6 +895,7 @@ private:
 	std::set<std::string> directories_;  // every directory but the root, durable at once
 	std::vector<logged> log_;
 	std::vector<std::size_t> marks_;  // per ordering point: log_ entries before it are staged ahead of those after
+	std::set<std::uint64_t> strays_;  // inodes staged after their ordering point settled (another thread's sync_directory between)
 	std::set<std::uint64_t> unreferenced_;  // inodes with no refs, freed once no handle holds them
 	std::uint64_t used_ = 0;  // every inode's footprint, as accounted
 	std::vector<rule> rules_;
@@ -1140,7 +1149,10 @@ public:
 			}
 			detail::fail(f->error, "faultfs stage");
 		}
-		if (node_->dirty) { node_->staged.emplace_back(epoch, node_->flushed()); }
+		if (node_->dirty) {
+			node_->staged.emplace_back(epoch, node_->flushed());
+			if (epoch >= fs_->marks_.size()) { fs_->strays_.insert(node_->id); }  // settled at the next sync_directory
+		}
 		node_->unmapped.clear();  // the point orders the mapped stores as writes made here
 	}
 
