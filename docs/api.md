@@ -161,3 +161,30 @@ run it. How it works: [mechanisms/netlab.md](mechanisms/netlab.md).
 | `sweep(prefix, everything=False)` | Deletes the namespaces of labs whose owner died, or all with `prefix`. |
 
 `python3 -I python/faultlab/netlab.py sweep [--prefix P] [--all]` sweeps from the shell.
+
+## disklab.py
+
+The disk tier: a filesystem on a fault layer (linear, dm-delay or dm-flakey) over dm-log-writes
+over two loop devices; the log replays to any flush, FUA write or mark. Needs Linux, root and the
+three dm targets, so it runs in a VM; `unavailable()` says why a host cannot run it. How it works:
+[mechanisms/disklab.md](mechanisms/disklab.md).
+
+| Name | What it does |
+|---|---|
+| `Disklab(log=None, node=None, root=/var/tmp, prefix="faultlab", runner=run)` | A lab in `<root>/<prefix>-<pid>-<n>`; events carry `nodes=[node]` when `node` is set. |
+| `open(mb=256, mkfs=MKFS, options="", log_mb=4*mb)` | Builds the stack, runs `mkfs` through it, marks `mkfs`, mounts with `options`; returns the mount point. |
+| `mark(name)` | Logs a mark after every write flushed so far: a point `replay` can stop at. |
+| `delay(ms)` | Every read, write and flush waits `ms` milliseconds (dm-delay), until `heal`. |
+| `media(mode="error")` | Every write fails with `EIO` (`"error"`) or completes unwritten (`"drop"`), until `heal` (dm-flakey). |
+| `heal()` | The fault layer passes I/O straight through again. |
+| `stop()` | Unmounts, removes the devices (the target logs its end mark), reads the log; returns its entries. |
+| `points()` | The entries replay can stop at: every flush, FUA write and mark. |
+| `replay(to)` | Rebuilds a zeroed image up to entry `to` (an index or a mark name), mounts it so the filesystem recovers; returns the mount point. Writes `power_cut`. |
+| `await close()`, `teardown()` | Unmounts everything, removes the devices and loops, deletes the directory. |
+| `read_log(path)`, `find(entries, to)`, `rebuild(log, image, size, entries, to)` | The log reader and the replay, for a log kept elsewhere. |
+| `sweep(prefix, everything=False, root=/var/tmp)` | Clears the labs of owners that died, or all with `prefix`. |
+
+Fault events: `delay` (`ms`), `media` (`mode`), `heal`, `power_cut` (`at`, a mark or an entry
+index), each with `nodes` when the lab has a node.
+
+`python3 -I python/faultlab/disklab.py sweep [--prefix P] [--all] [--root DIR]` sweeps from the shell.
