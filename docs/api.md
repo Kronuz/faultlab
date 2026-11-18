@@ -139,3 +139,25 @@ The portable network tier: a TCP link per directed node pair on 127.0.0.1, TLS-t
 | `await close()` | Closes every link, then raises the first failure a forwarding task met. |
 
 `python3 -I python/faultlab/proxy.py bandwidth` measures the cap against its target.
+
+## netlab.py
+
+The Linux network tier: a network namespace per node, a veth pair per pair of nodes, netem on each
+end and an nftables set per namespace. Needs Linux and root; `unavailable()` says why a host cannot
+run it. How it works: [mechanisms/netlab.md](mechanisms/netlab.md).
+
+| Name | What it does |
+|---|---|
+| `Netlab(log=None, prefix="faultlab", runner=run)` | A lab for nodes numbered 1 to 254; `log` as Mesh's; `runner` runs its commands. |
+| `await start(peer_ports)`, `open(peer_ports)` | Builds the namespaces and links; each node listens on its port in its own namespace. |
+| `address(source, target)`, `ip(node, peer)` | The address `source` dials to reach `target`: `target`'s end of their link. |
+| `namespace(node)`, `command(node, argv)`, `socket(node, kind)` | The node's namespace; `argv` run in it; an IPv4 socket made in it. |
+| `partition(a, b)`, `isolate(n)` | Drop every packet between `a` and `b`, or between `n` and every node, until healed; TCP retransmits after. |
+| `heal(a=None, b=None)` | Heals every link, `a`'s, or the pair's. |
+| `reset(a, b)` | Destroys every TCP socket between `a` and `b` on both sides (`ss -K`), each sending its peer a RST; new connections work. |
+| `cap(mbit, a=None, b=None)` | Caps each direction of every link, `a`'s, or the pair's; 0 lifts it. |
+| `delay(ms, ...)`, `loss(p, ...)`, `reorder(p, ...)`, `duplicate(p, ...)` | netem on the same links; `delay` is per direction, `p` a probability; `reorder` needs a delay. |
+| `await close()`, `teardown()` | Deletes the namespaces, and with them every veth, qdisc and table. |
+| `sweep(prefix, everything=False)` | Deletes the namespaces of labs whose owner died, or all with `prefix`. |
+
+`python3 -I python/faultlab/netlab.py sweep [--prefix P] [--all]` sweeps from the shell.

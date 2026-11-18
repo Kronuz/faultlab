@@ -422,12 +422,13 @@ def child(end: str) -> int:
     links = run(lab.command(1, ["ip", "-o", "link", "show", "type", "veth"])).count("to")
     tables = run(lab.command(2, ["nft", "list", "ruleset"])).count("@cut")
     print(f"ready {links} veths in node 1, {tables} cut rule in node 2", flush=True)
+    try:
+        sys.stdin.readline()  # the parent has counted the namespaces; a signal may come instead
+    except KeyboardInterrupt:
+        return 130
     if end == "close":
         asyncio.run(lab.close())
-    if end in ("close", "exit"):
-        return 0
-    time.sleep(3600)
-    return 1
+    return 0
 
 
 def teardown() -> None:
@@ -435,12 +436,17 @@ def teardown() -> None:
     before = listing()
     print("  before:\n    " + before.replace("\n", "\n    "), flush=True)
     for end in ("close", "exit", "SIGTERM", "SIGHUP", "SIGINT", "SIGKILL"):
-        proc = subprocess.Popen([sys.executable, "-I", __file__, "child", end], stdout=subprocess.PIPE, text=True)
-        assert proc.stdout is not None
+        proc = subprocess.Popen(
+            [sys.executable, "-I", __file__, "child", end], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        )
+        assert proc.stdin is not None and proc.stdout is not None
         ready = proc.stdout.readline().strip()
         built = len(ours())
         if end.startswith("SIG"):
             proc.send_signal(getattr(signal, end))
+        else:
+            proc.stdin.write("go\n")
+            proc.stdin.flush()
         proc.wait(30)
         left = ours()
         if end == "SIGKILL":
@@ -467,7 +473,9 @@ def teardown() -> None:
     after = listing()
     print("  after:\n    " + after.replace("\n", "\n    "), flush=True)
     verdict("the listing after equals the listing before", after == before)
-    proc = subprocess.Popen([sys.executable, "-I", __file__, "child", "SIGKILL"], stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(
+        [sys.executable, "-I", __file__, "child", "SIGKILL"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
     assert proc.stdout is not None
     proc.stdout.readline()
     proc.kill()

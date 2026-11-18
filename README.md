@@ -19,6 +19,7 @@ the Python half is stdlib only.
 C++, header-only, needs completion/io.h only       Python, stdlib only, python3 -I
   faultlab/faultfs.h    crash and media model         faultlab/history.py   the one checker
   faultlab/recorder.h   recording IO decorator        faultlab/proxy.py     portable network tier
+                                                      faultlab/netlab.py    Linux netns, netem, nftables
   faultlab/scenario.h   seeded scenario line          faultlab/scenario.py  the same line
   faultlab/events.h     JSON-line event writer
                          \___ one scenario line, one event log, read by the one checker ___/
@@ -104,7 +105,7 @@ target_link_libraries(my_tests PRIVATE faultlab::faultlab)
 ```
 
 The Python modules are plain files: run `python3 -I <checkout>/python/faultlab/history.py`, or
-put `<checkout>/python` on `sys.path` and `from faultlab import history, proxy, scenario`.
+put `<checkout>/python` on `sys.path` and `from faultlab import history, netlab, proxy, scenario`.
 
 ## 🎯 When to use it
 
