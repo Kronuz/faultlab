@@ -81,6 +81,19 @@ for (std::uint64_t cut = 0; cut <= steps; ++cut) {
 }
 ```
 
+On Linux, the labs put real kernel faults under a cluster. netlab gives each node its own network
+namespace, with netem on every link and nftables cuts; disklab puts device-mapper targets under
+each node's directory. Python only issues `ip`, `tc`, `nft` and `dmsetup` commands and logs each
+fault, so packets and blocks never pass through it. Both need root, so run them in a Linux VM:
+
+```python
+from faultlab.netlab import Netlab
+lab = Netlab(log)                    # writes each fault to the event log
+lab.open({1: 8890, 2: 8890, 3: 8890})
+lab.delay(20); lab.loss(0.01)        # every link: 20 ms, 1% loss
+lab.partition(1, 2); lab.heal()
+```
+
 A cluster harness writes the event log and checks it:
 
 ```sh
@@ -110,10 +123,15 @@ put `<checkout>/python` on `sys.path` and `from faultlab import disklab, history
 
 ## 🎯 When to use it
 
-Crash and fault tests of code that does its I/O through `journal::IO`, and histories of
-replicated registers under network and process faults.
+Crash and fault tests of code that does its I/O through `journal::IO`; a cluster run on a lossy,
+slow or partitioned network (netlab) or a slow, failing or reordering disk (disklab); and
+histories of replicated registers under those faults.
 
 Not for:
+
+- **Throughput or latency numbers through the proxy.** `proxy.py` is the portable network tier
+  (macOS has no network namespaces): bytes cross a Python process, so it injects faults but
+  colors timings. Measure through netlab, where the kernel carries the packets.
 
 - **Proving what a real filesystem does.** faultfs models the IO contract (an independent coin
   per sector and per namespace operation), which allows more than ext4, XFS or APFS leave; the
@@ -126,6 +144,9 @@ Not for:
 ## 📚 Documentation
 
 - [docs/api.md](docs/api.md): every member a test touches, C++ and Python.
+- [docs/mechanisms/netlab.md](docs/mechanisms/netlab.md) and
+  [docs/mechanisms/disklab.md](docs/mechanisms/disklab.md): the Linux labs' topology, faults and
+  teardown.
 - [docs/mechanisms/crash-model.md](docs/mechanisms/crash-model.md): how `crash` rebuilds a state,
   the policies, the link rule, shared-mapping folds and the recorder.
 - [Design](https://github.com/Kronuz/cpp-libraries/blob/main/docs/design/faultlab.md) (F1-F16)
