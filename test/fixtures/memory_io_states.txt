@@ -1,0 +1,850 @@
+# journal's MemoryIO power_loss states for the sequences test/sector_test.cc checks.
+# source: journal a412175fe437b59463bcaa97ebc75429643bdc65 include/journal/memory_io.h
+# regenerate: cmake -DFAULTLAB_REGENERATE_MEMORY_IO=ON, build faultlab_memory_io_gen, run it with an output path
+# format: `sequence N durable D appends A1 A2..` (byte counts, the bytes come from sector_sequences.h);
+# then one `state SIZE [zero FROM-TO..]` per state: the sequence's full image cut to SIZE with
+# the ranges [FROM, TO) zero (a lost sector). Sorted by state bytes.
+sequence 0 durable 533 appends 586 561 368
+state 533
+state 2048 zero 533-1536
+state 1536 zero 533-1024
+state 2048 zero 533-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 1 durable 153 appends 652
+state 153
+state 805 zero 153-512
+state 512
+state 805
+sequence 2 durable 605 appends 579 397 467
+state 605
+state 2048 zero 605-1536
+state 1536 zero 605-1024
+state 2048 zero 605-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 3 durable 837 appends 432
+state 837
+state 1269 zero 837-1024
+state 1024
+state 1269
+sequence 4 durable 491 appends 729 151
+state 491
+state 1371 zero 491-1024
+state 1024 zero 491-512
+state 1371 zero 491-512
+state 512
+state 1371 zero 512-1024
+state 1024
+state 1371
+sequence 5 durable 457 appends 454
+state 457
+state 911 zero 457-512
+state 512
+state 911
+sequence 6 durable 906 appends 205 821
+state 906
+state 1932 zero 906-1536
+state 1536 zero 906-1024
+state 1932 zero 906-1024
+state 1024
+state 1932 zero 1024-1536
+state 1536
+state 1932
+sequence 7 durable 484 appends 92 52 573
+state 484
+state 1201 zero 484-1024
+state 1024 zero 484-512
+state 1201 zero 484-512
+state 512
+state 1201 zero 512-1024
+state 1024
+state 1201
+sequence 8 durable 626 appends 566 384 472
+state 626
+state 2048 zero 626-1536
+state 1536 zero 626-1024
+state 2048 zero 626-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 9 durable 618 appends 133 699 142 456
+state 618
+state 2048 zero 618-1536
+state 1536 zero 618-1024
+state 2048 zero 618-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 10 durable 69 appends 241 882 234 622
+state 69
+state 2048 zero 69-1536
+state 1536 zero 69-1024
+state 2048 zero 69-1024
+state 1024 zero 69-512
+state 2048 zero 69-512 1024-1536
+state 1536 zero 69-512
+state 2048 zero 69-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 11 durable 880 appends 856 274 38
+state 880
+state 2048 zero 880-1536
+state 1536 zero 880-1024
+state 2048 zero 880-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 12 durable 911 appends 444 693
+state 911
+state 2048 zero 911-1536
+state 1536 zero 911-1024
+state 2048 zero 911-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 13 durable 864 appends 568
+state 864
+state 1432 zero 864-1024
+state 1024
+state 1432
+sequence 14 durable 842 appends 251 583 372
+state 842
+state 2048 zero 842-1536
+state 1536 zero 842-1024
+state 2048 zero 842-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 15 durable 48 appends 154 795 482
+state 48
+state 1479 zero 48-1024
+state 1024 zero 48-512
+state 1479 zero 48-512
+state 512
+state 1479 zero 512-1024
+state 1024
+state 1479
+sequence 16 durable 187 appends 558
+state 187
+state 745 zero 187-512
+state 512
+state 745
+sequence 17 durable 668 appends 609 771
+state 668
+state 2048 zero 668-1536
+state 1536 zero 668-1024
+state 2048 zero 668-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 18 durable 436 appends 241 886 98 387
+state 436
+state 2048 zero 436-1536
+state 1536 zero 436-1024
+state 2048 zero 436-1024
+state 1024 zero 436-512
+state 2048 zero 436-512 1024-1536
+state 1536 zero 436-512
+state 2048 zero 436-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 19 durable 73 appends 147
+state 73
+state 220
+sequence 20 durable 510 appends 864 546
+state 510
+state 1920 zero 510-1536
+state 1536 zero 510-1024
+state 1920 zero 510-1024
+state 1024 zero 510-512
+state 1920 zero 510-512 1024-1536
+state 1536 zero 510-512
+state 1920 zero 510-512
+state 512
+state 1920 zero 512-1536
+state 1536 zero 512-1024
+state 1920 zero 512-1024
+state 1024
+state 1920 zero 1024-1536
+state 1536
+state 1920
+sequence 21 durable 27 appends 83 64 487
+state 27
+state 661 zero 27-512
+state 512
+state 661
+sequence 22 durable 429 appends 551 622 446
+state 429
+state 2048 zero 429-1536
+state 1536 zero 429-1024
+state 2048 zero 429-1024
+state 1024 zero 429-512
+state 2048 zero 429-512 1024-1536
+state 1536 zero 429-512
+state 2048 zero 429-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 23 durable 741 appends 204 589 356
+state 741
+state 1890 zero 741-1536
+state 1536 zero 741-1024
+state 1890 zero 741-1024
+state 1024
+state 1890 zero 1024-1536
+state 1536
+state 1890
+sequence 24 durable 433 appends 647
+state 433
+state 1080 zero 433-1024
+state 1024 zero 433-512
+state 1080 zero 433-512
+state 512
+state 1080 zero 512-1024
+state 1024
+state 1080
+sequence 25 durable 526 appends 495 733 268 26
+state 526
+state 2048 zero 526-1536
+state 1536 zero 526-1024
+state 2048 zero 526-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 26 durable 102 appends 198
+state 102
+state 300
+sequence 27 durable 692 appends 356 284 25
+state 692
+state 1357 zero 692-1024
+state 1024
+state 1357
+sequence 28 durable 818 appends 31 510 689
+state 818
+state 2048 zero 818-1536
+state 1536 zero 818-1024
+state 2048 zero 818-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 29 durable 178 appends 633
+state 178
+state 811 zero 178-512
+state 512
+state 811
+sequence 30 durable 654 appends 249
+state 654
+state 903
+sequence 31 durable 751 appends 485 658 154
+state 751
+state 2048 zero 751-1536
+state 1536 zero 751-1024
+state 2048 zero 751-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 32 durable 226 appends 773 807 242
+state 226
+state 2048 zero 226-1536
+state 1536 zero 226-1024
+state 2048 zero 226-1024
+state 1024 zero 226-512
+state 2048 zero 226-512 1024-1536
+state 1536 zero 226-512
+state 2048 zero 226-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 33 durable 989 appends 657
+state 989
+state 1646 zero 989-1536
+state 1536 zero 989-1024
+state 1646 zero 989-1024
+state 1024
+state 1646 zero 1024-1536
+state 1536
+state 1646
+sequence 34 durable 980 appends 524 544
+state 980
+state 2048 zero 980-1536
+state 1536 zero 980-1024
+state 2048 zero 980-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 35 durable 421 appends 429
+state 421
+state 850 zero 421-512
+state 512
+state 850
+sequence 36 durable 303 appends 248 646 681 170
+state 303
+state 2048 zero 303-1536
+state 1536 zero 303-1024
+state 2048 zero 303-1024
+state 1024 zero 303-512
+state 2048 zero 303-512 1024-1536
+state 1536 zero 303-512
+state 2048 zero 303-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 37 durable 422 appends 293
+state 422
+state 715 zero 422-512
+state 512
+state 715
+sequence 38 durable 314 appends 94
+state 314
+state 408
+sequence 39 durable 887 appends 547 293 89 232
+state 887
+state 2048 zero 887-1536
+state 1536 zero 887-1024
+state 2048 zero 887-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 40 durable 879 appends 715 392 62
+state 879
+state 2048 zero 879-1536
+state 1536 zero 879-1024
+state 2048 zero 879-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 41 durable 460 appends 128
+state 460
+state 588 zero 460-512
+state 512
+state 588
+sequence 42 durable 90 appends 554 262
+state 90
+state 906 zero 90-512
+state 512
+state 906
+sequence 43 durable 419 appends 33 53 391
+state 419
+state 896 zero 419-512
+state 512
+state 896
+sequence 44 durable 749 appends 516 764
+state 749
+state 2029 zero 749-1536
+state 1536 zero 749-1024
+state 2029 zero 749-1024
+state 1024
+state 2029 zero 1024-1536
+state 1536
+state 2029
+sequence 45 durable 139 appends 103
+state 139
+state 242
+sequence 46 durable 433 appends 47
+state 433
+state 480
+sequence 47 durable 372 appends 782
+state 372
+state 1154 zero 372-1024
+state 1024 zero 372-512
+state 1154 zero 372-512
+state 512
+state 1154 zero 512-1024
+state 1024
+state 1154
+sequence 48 durable 577 appends 158 490
+state 577
+state 1225 zero 577-1024
+state 1024
+state 1225
+sequence 49 durable 839 appends 479 730
+state 839
+state 2048 zero 839-1536
+state 1536 zero 839-1024
+state 2048 zero 839-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 50 durable 931 appends 851
+state 931
+state 1782 zero 931-1536
+state 1536 zero 931-1024
+state 1782 zero 931-1024
+state 1024
+state 1782 zero 1024-1536
+state 1536
+state 1782
+sequence 51 durable 257 appends 125 528 96
+state 257
+state 1006 zero 257-512
+state 512
+state 1006
+sequence 52 durable 747 appends 788 115 398
+state 747
+state 2048 zero 747-1536
+state 1536 zero 747-1024
+state 2048 zero 747-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 53 durable 762 appends 544 742
+state 762
+state 2048 zero 762-1536
+state 1536 zero 762-1024
+state 2048 zero 762-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 54 durable 465 appends 167
+state 465
+state 632 zero 465-512
+state 512
+state 632
+sequence 55 durable 187 appends 108 21 107
+state 187
+state 423
+sequence 56 durable 317 appends 363 497 697 174
+state 317
+state 2048 zero 317-1536
+state 1536 zero 317-1024
+state 2048 zero 317-1024
+state 1024 zero 317-512
+state 2048 zero 317-512 1024-1536
+state 1536 zero 317-512
+state 2048 zero 317-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 57 durable 441 appends 445 892 1
+state 441
+state 1779 zero 441-1536
+state 1536 zero 441-1024
+state 1779 zero 441-1024
+state 1024 zero 441-512
+state 1779 zero 441-512 1024-1536
+state 1536 zero 441-512
+state 1779 zero 441-512
+state 512
+state 1779 zero 512-1536
+state 1536 zero 512-1024
+state 1779 zero 512-1024
+state 1024
+state 1779 zero 1024-1536
+state 1536
+state 1779
+sequence 58 durable 396 appends 151
+state 396
+state 547 zero 396-512
+state 512
+state 547
+sequence 59 durable 272 appends 275 227
+state 272
+state 774 zero 272-512
+state 512
+state 774
+sequence 60 durable 188 appends 46 320 411
+state 188
+state 965 zero 188-512
+state 512
+state 965
+sequence 61 durable 446 appends 86
+state 446
+state 532 zero 446-512
+state 512
+state 532
+sequence 62 durable 165 appends 844 255
+state 165
+state 1264 zero 165-1024
+state 1024 zero 165-512
+state 1264 zero 165-512
+state 512
+state 1264 zero 512-1024
+state 1024
+state 1264
+sequence 63 durable 330 appends 314
+state 330
+state 644 zero 330-512
+state 512
+state 644
+sequence 64 durable 979 appends 235 346
+state 979
+state 1560 zero 979-1536
+state 1536 zero 979-1024
+state 1560 zero 979-1024
+state 1024
+state 1560 zero 1024-1536
+state 1536
+state 1560
+sequence 65 durable 416 appends 237 435 70 406
+state 416
+state 1564 zero 416-1536
+state 1536 zero 416-1024
+state 1564 zero 416-1024
+state 1024 zero 416-512
+state 1564 zero 416-512 1024-1536
+state 1536 zero 416-512
+state 1564 zero 416-512
+state 512
+state 1564 zero 512-1536
+state 1536 zero 512-1024
+state 1564 zero 512-1024
+state 1024
+state 1564 zero 1024-1536
+state 1536
+state 1564
+sequence 66 durable 458 appends 416
+state 458
+state 874 zero 458-512
+state 512
+state 874
+sequence 67 durable 553 appends 542 597 356
+state 553
+state 2048 zero 553-1536
+state 1536 zero 553-1024
+state 2048 zero 553-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 68 durable 33 appends 593
+state 33
+state 626 zero 33-512
+state 512
+state 626
+sequence 69 durable 98 appends 643 157 621 529
+state 98
+state 2048 zero 98-1536
+state 1536 zero 98-1024
+state 2048 zero 98-1024
+state 1024 zero 98-512
+state 2048 zero 98-512 1024-1536
+state 1536 zero 98-512
+state 2048 zero 98-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 70 durable 259 appends 210
+state 259
+state 469
+sequence 71 durable 171 appends 25 184 497 849
+state 171
+state 1726 zero 171-1536
+state 1536 zero 171-1024
+state 1726 zero 171-1024
+state 1024 zero 171-512
+state 1726 zero 171-512 1024-1536
+state 1536 zero 171-512
+state 1726 zero 171-512
+state 512
+state 1726 zero 512-1536
+state 1536 zero 512-1024
+state 1726 zero 512-1024
+state 1024
+state 1726 zero 1024-1536
+state 1536
+state 1726
+sequence 72 durable 442 appends 651 889 66
+state 442
+state 2048 zero 442-1536
+state 1536 zero 442-1024
+state 2048 zero 442-1024
+state 1024 zero 442-512
+state 2048 zero 442-512 1024-1536
+state 1536 zero 442-512
+state 2048 zero 442-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 73 durable 200 appends 651 121
+state 200
+state 972 zero 200-512
+state 512
+state 972
+sequence 74 durable 139 appends 422 319
+state 139
+state 880 zero 139-512
+state 512
+state 880
+sequence 75 durable 580 appends 32 166 198
+state 580
+state 976
+sequence 76 durable 854 appends 66 617 511
+state 854
+state 2048 zero 854-1536
+state 1536 zero 854-1024
+state 2048 zero 854-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 77 durable 88 appends 152
+state 88
+state 240
+sequence 78 durable 828 appends 492 254 396
+state 828
+state 1970 zero 828-1536
+state 1536 zero 828-1024
+state 1970 zero 828-1024
+state 1024
+state 1970 zero 1024-1536
+state 1536
+state 1970
+sequence 79 durable 769 appends 618
+state 769
+state 1387 zero 769-1024
+state 1024
+state 1387
+sequence 80 durable 503 appends 565 662 318
+state 503
+state 2048 zero 503-1536
+state 1536 zero 503-1024
+state 2048 zero 503-1024
+state 1024 zero 503-512
+state 2048 zero 503-512 1024-1536
+state 1536 zero 503-512
+state 2048 zero 503-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 81 durable 723 appends 246 73
+state 723
+state 1042 zero 723-1024
+state 1024
+state 1042
+sequence 82 durable 1022 appends 122
+state 1022
+state 1144 zero 1022-1024
+state 1024
+state 1144
+sequence 83 durable 226 appends 210 5 304 158
+state 226
+state 903 zero 226-512
+state 512
+state 903
+sequence 84 durable 539 appends 718 516
+state 539
+state 1773 zero 539-1536
+state 1536 zero 539-1024
+state 1773 zero 539-1024
+state 1024
+state 1773 zero 1024-1536
+state 1536
+state 1773
+sequence 85 durable 512 appends 438 705
+state 512
+state 1655 zero 512-1536
+state 1536 zero 512-1024
+state 1655 zero 512-1024
+state 1024
+state 1655 zero 1024-1536
+state 1536
+state 1655
+sequence 86 durable 265 appends 879
+state 265
+state 1144 zero 265-1024
+state 1024 zero 265-512
+state 1144 zero 265-512
+state 512
+state 1144 zero 512-1024
+state 1024
+state 1144
+sequence 87 durable 554 appends 562 42 100 486
+state 554
+state 1744 zero 554-1536
+state 1536 zero 554-1024
+state 1744 zero 554-1024
+state 1024
+state 1744 zero 1024-1536
+state 1536
+state 1744
+sequence 88 durable 188 appends 242 841 266 511
+state 188
+state 2048 zero 188-1536
+state 1536 zero 188-1024
+state 2048 zero 188-1024
+state 1024 zero 188-512
+state 2048 zero 188-512 1024-1536
+state 1536 zero 188-512
+state 2048 zero 188-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 89 durable 777 appends 480 242 2
+state 777
+state 1501 zero 777-1024
+state 1024
+state 1501
+sequence 90 durable 327 appends 179 473
+state 327
+state 979 zero 327-512
+state 512
+state 979
+sequence 91 durable 456 appends 837 152 138 465
+state 456
+state 2048 zero 456-1536
+state 1536 zero 456-1024
+state 2048 zero 456-1024
+state 1024 zero 456-512
+state 2048 zero 456-512 1024-1536
+state 1536 zero 456-512
+state 2048 zero 456-512
+state 512
+state 2048 zero 512-1536
+state 1536 zero 512-1024
+state 2048 zero 512-1024
+state 1024
+state 2048 zero 1024-1536
+state 1536
+state 2048
+sequence 92 durable 545 appends 842 21 247
+state 545
+state 1655 zero 545-1536
+state 1536 zero 545-1024
+state 1655 zero 545-1024
+state 1024
+state 1655 zero 1024-1536
+state 1536
+state 1655
+sequence 93 durable 450 appends 133 884 28 499
+state 450
+state 1994 zero 450-1536
+state 1536 zero 450-1024
+state 1994 zero 450-1024
+state 1024 zero 450-512
+state 1994 zero 450-512 1024-1536
+state 1536 zero 450-512
+state 1994 zero 450-512
+state 512
+state 1994 zero 512-1536
+state 1536 zero 512-1024
+state 1994 zero 512-1024
+state 1024
+state 1994 zero 1024-1536
+state 1536
+state 1994
+sequence 94 durable 43 appends 425 282 434
+state 43
+state 1184 zero 43-1024
+state 1024 zero 43-512
+state 1184 zero 43-512
+state 512
+state 1184 zero 512-1024
+state 1024
+state 1184
+sequence 95 durable 397 appends 457 330 439
+state 397
+state 1623 zero 397-1536
+state 1536 zero 397-1024
+state 1623 zero 397-1024
+state 1024 zero 397-512
+state 1623 zero 397-512 1024-1536
+state 1536 zero 397-512
+state 1623 zero 397-512
+state 512
+state 1623 zero 512-1536
+state 1536 zero 512-1024
+state 1623 zero 512-1024
+state 1024
+state 1623 zero 1024-1536
+state 1536
+state 1623
+sequence 96 durable 371 appends 81 332
+state 371
+state 784 zero 371-512
+state 512
+state 784
+sequence 97 durable 378 appends 75 500
+state 378
+state 953 zero 378-512
+state 512
+state 953
+sequence 98 durable 36 appends 893 448
+state 36
+state 1377 zero 36-1024
+state 1024 zero 36-512
+state 1377 zero 36-512
+state 512
+state 1377 zero 512-1024
+state 1024
+state 1377
+sequence 99 durable 709 appends 713 353 119
+state 709
+state 1894 zero 709-1536
+state 1536 zero 709-1024
+state 1894 zero 709-1024
+state 1024
+state 1894 zero 1024-1536
+state 1536
+state 1894

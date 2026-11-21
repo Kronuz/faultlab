@@ -82,5 +82,5 @@ needs them adds a write-boundary cut.
 
 MemoryIO's states are not computed in the test: `test/fixtures/memory_io_states.txt` records them
 for every sequence `sector_test` checks, at journal:a412175, so faultlab fetches nothing from
-journal. `-DFAULTLAB_REGENERATE_MEMORY_IO=ON` builds `faultlab_memory_io_gen`, which rewrites the
-file from the live MemoryIO.
+journal. `test/fixtures/regenerate_memory_io.sh` (`-DFAULTLAB_REGENERATE_MEMORY_IO=ON`, which builds
+`faultlab_memory_io_gen`) rewrites the file from the live MemoryIO.
