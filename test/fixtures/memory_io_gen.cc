@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
 	}
 	std::ofstream out(argv[1], std::ios::binary);
 	out << "# journal's MemoryIO power_loss states for the sequences test/sector_test.cc checks.\n"
-	    << "# source: journal " FAULTLAB_JOURNAL_COMMIT << " include/journal/memory_io.h\n"
+	    << "# source: journal " FAULTLAB_JOURNAL_COMMIT << " (MemoryIO, memory_io.h)\n"
 	    << "# regenerate: test/fixtures/regenerate_memory_io.sh\n"
 	    << "# format: `sequence N durable D appends A1 A2..` (byte counts, the bytes come from sector_sequences.h);\n"
 	    << "# then one `state SIZE [zero FROM-TO..]` per state: the sequence's full image cut to SIZE with\n"
