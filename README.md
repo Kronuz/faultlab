@@ -106,7 +106,8 @@ python3 -I faultlab/history.py run/events.jsonl
 ## 📦 Installation
 
 Requires a C++20 compiler and CMake 3.18 or newer; it fetches completion at a pinned commit.
-The tests also fetch journal's `memory_io.h` and need Python 3.12. CI builds it on Linux (x86_64,
+The tests need Python 3.12 and fetch nothing else; the MemoryIO states they check are recorded in
+`test/fixtures/memory_io_states.txt` (regenerate with `-DFAULTLAB_REGENERATE_MEMORY_IO=ON`, which fetches journal). CI builds it on Linux (x86_64,
 arm64), macOS (arm64, x86_64) and FreeBSD, plus ASan, UBSan and TSan builds.
 
 ```cmake

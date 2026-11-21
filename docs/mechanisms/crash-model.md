@@ -79,3 +79,8 @@ smallest unit a device writes atomically. journal's MemoryIO and storage's Crash
 boundaries over block appends, which `size_pick::sector` covers (A3). Unaligned CrashIO appends
 reach states no sector pick does, sizes at a write boundary inside a sector (R7); a consumer that
 needs them adds a write-boundary cut.
+
+MemoryIO's states are not computed in the test: `test/fixtures/memory_io_states.txt` records them
+for every sequence `sector_test` checks, at journal:a412175, so faultlab fetches nothing from
+journal. `-DFAULTLAB_REGENERATE_MEMORY_IO=ON` builds `faultlab_memory_io_gen`, which rewrites the
+file from the live MemoryIO.
