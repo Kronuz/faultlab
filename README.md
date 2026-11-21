@@ -37,7 +37,8 @@ C++, header-only, needs completion/io.h only       Python, stdlib only, python3 
   boundary, the states journal's MemoryIO and storage's CrashIO reach.
 - **Process death, snapshots and power cuts.** `kill()` ends a process and keeps what the device
   holds; `snapshot()` copies the model to sweep cut points from one prefix; `power_off_after(n)`
-  fails every mutation after the n-th, and `powered_off()` says so.
+  fails every mutation after the n-th, `powered_off()` says so, and `power_on()` ends the cut as a
+  process crash instead of a power loss.
 - **The whole seam.** Directories on one device, `link`, `preallocate`, `map_shared`,
   `try_lease`, inspection and every owner-lock mode, with fault rules, media faults, short and
   damaged writes and a capacity.

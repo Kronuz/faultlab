@@ -17,8 +17,11 @@ The model: an in-memory device holding a root directory and its subdirectories. 
 | `crash(seed, crash_policy = {})` | Power loss: rebuilds a state the device could hold, chosen by `seed` and the policy. Handles go stale; owner locks and leases release; shared mappings detach. |
 | `kill()` | Process death: handles stale, locks and leases released, mapping stores kept; current and durable bytes stay. |
 | `snapshot() const` | A deep copy without handles, locks, leases or mappings, mapping stores folded first. |
-| `power_off_after(n)` / `powered_off()` | After `n` more mutations, each one fails with `EIO` before its effect, until `crash()`. |
+| `power_off_after(n)` / `powered_off()` | After `n` more mutations, each one fails with `EIO` before its effect, until `crash()` or `power_on()`. |
+| `power_on()` | Ends the cut as a process crash, where `crash()` ends it as a power loss: handles go stale and locks, leases and mappings release as at `kill()`, every byte stays, synced or not, and operations succeed again. |
 | `mutations()`, `syncs()`, `calls()` | Counters: mutating calls (crash points), syncs that reached the device, every IO and File call. |
+| `operations(op)` | Calls of one kind so far, failed ones included: `mutations()` by kind, and `try_lease` calls for `op::lease`. |
+| `sync_latency(d)` | Each `File::sync` (and `sync_data`) then waits at least `d` before its effect, outside the model's lock, as a slow device flush; `{}` ends it. |
 | `add_fault(fault)` / `clear_faults()` | Fails the `nth` call of `fault.kind` with `fault.error`, before or `after` its effect; a sync with `keep` loses its pages (Linux writeback-error semantics). |
 | `add_media_fault(path, media, begin, end, times = 0)` / `media_hits()` | Reads overlapping `[begin, end)` fail (`read_error`) or flip a bit (`bit_flip`). |
 | `short_writes(max_bytes)` | Each write stores at most `max_bytes` and returns the count. |
@@ -51,8 +54,11 @@ when it is missing); its files are `journal::File`s. The whole seam is modeled:
 
 - Opens, `create_exclusive`, `replace` (atomic rename), `link` (never replaces: `EEXIST`),
   `remove`, scans, footprints and `inspect_entry` (device 1, the effective uid, mode 0600, 0700
-  for a directory). A directory refuses `remove` and `link` (`EPERM`) and `open` (`EISDIR`).
-- `sync` and `sync_directory`; the group syncs (`sync_files`, `sync_data_files`,
+  for a directory). A directory refuses `remove` and `link` (`EPERM`) and `open` (`EISDIR`). The
+  reclaim-candidate opens (`open_reclaim_candidate`, its read-only form) return null for a missing
+  name or a directory, as `io.h` says; the plain opens throw.
+- `sync` and `sync_directory`; a `sync` that fails after its effect leaves the flushed bytes
+  durable, with what an ordering point staged before them; the group syncs (`sync_files`, `sync_data_files`,
   `sync_files_and_directory`) are the seam's defaults over them; `order_files_and_directory` is
   the ordering point that stages each file ahead of later changes.
 - `preallocate` (a mutation; reserves space), `map` (read-only, with `map_files`),

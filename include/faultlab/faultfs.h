@@ -27,7 +27,8 @@
 // Faults: a rule fails the n-th operation of a kind, before or after its effect, with EIO or
 // ENOSPC; a capacity fails writes and preallocations that grow the total past it with ENOSPC;
 // short writes return part of the request. A failed File::sync drops the file's unsynced bytes;
-// a later sync succeeds. Handles opened before a crash or a kill() fail with EIO.
+// a later sync succeeds; one that failed after its effect made the flushed bytes durable. Handles
+// opened before a crash, a kill() or a power_on() fail with EIO.
 //
 // Media faults model unreliable storage on reads: a read overlapping a file's byte range fails
 // with EIO (a latent sector error) or returns one bit flipped in that range, the next `times`
@@ -49,7 +50,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -66,6 +69,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -359,6 +363,14 @@ public:
 		std::lock_guard lock(mu_);
 		return power_left_ && *power_left_ == 0;
 	}
+	// Ends power_off_after's cut as a process crash, where crash() ends it as a power loss: the
+	// process dies as at kill(), every byte stays, synced or not, and operations succeed again.
+	void power_on() {
+		std::lock_guard lock(mu_);
+		fold_locked();
+		release();
+		power_left_.reset();
+	}
 	// Mutating operations so far, to enumerate crash points.
 	std::uint64_t mutations() const {
 		std::lock_guard lock(mu_);
@@ -370,12 +382,19 @@ public:
 		std::lock_guard lock(mu_);
 		return syncs_;
 	}
+	// Operations of `kind` so far, failed ones included: mutations() by kind, and try_lease calls.
+	std::uint64_t operations(op kind) const {
+		std::lock_guard lock(mu_);
+		return ops_[std::size_t(kind)];
+	}
 	// Every call into an IO or File so far, reads, opens, maps and queries included (not a
 	// mapping's or lock's release): a code path that makes no device call leaves it unchanged.
 	std::uint64_t calls() const {
 		std::lock_guard lock(mu_);
 		return calls_;
 	}
+	// Each File::sync then waits at least `d` before its effect, as a device flush does.
+	void sync_latency(std::chrono::microseconds d) noexcept { sync_latency_.store(d.count(), std::memory_order_relaxed); }
 	void set_capacity(std::uint64_t bytes) {
 		std::lock_guard lock(mu_);
 		capacity_ = bytes;
@@ -449,6 +468,7 @@ private:
 	// off, every mutating operation fails before its effect.
 	const fault* check(op kind) {
 		++mutations_;
+		++ops_[std::size_t(kind)];
 		if (kind == op::sync || kind == op::sync_directory) { ++syncs_; }
 		if (power_left_) {
 			if (*power_left_ == 0) { return &power_off_; }
@@ -853,6 +873,8 @@ private:
 		calls_ = o.calls_;
 		syncs_ = o.syncs_;
 		power_left_ = o.power_left_;
+		std::copy(std::begin(o.ops_), std::end(o.ops_), ops_);
+		sync_latency_.store(o.sync_latency_.load());
 		recount();
 	}
 	void take(filesystem&& o) {
@@ -887,6 +909,8 @@ private:
 		calls_ = o.calls_;
 		syncs_ = o.syncs_;
 		power_left_ = o.power_left_;
+		std::copy(std::begin(o.ops_), std::end(o.ops_), ops_);
+		sync_latency_.store(o.sync_latency_.load());
 	}
 
 	mutable std::mutex mu_;
@@ -917,6 +941,8 @@ private:
 	journal::FilesystemClass class_{true, "faultfs"};
 	journal::DirectoryTrust trust_{true, false, false, false};
 	std::uint64_t mutations_ = 0, calls_ = 0, syncs_ = 0;
+	std::uint64_t ops_[std::size_t(op::lease) + 1] = {};  // per kind
+	std::atomic<std::int64_t> sync_latency_{0};  // microseconds
 	std::optional<std::uint64_t> power_left_;
 };
 
@@ -1076,6 +1102,7 @@ public:
 		return std::make_shared<shared_mapping>(*fs_, node_, length);
 	}
 	void sync() override {
+		if (const auto us = fs_->sync_latency_.load(std::memory_order_relaxed)) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
 		std::lock_guard lock(fs_->mu_);
 		const accounted resized{*fs_, *node_};
 		enter();
@@ -1086,6 +1113,8 @@ public:
 			// ordering point staged before them.
 			if (f->after) {
 				node_->durable = node_->synced();
+				node_->staged.clear();
+				node_->at_mark.clear();
 				fs_->settle_staged();
 			}
 			if (f->keep && !f->after) {
@@ -1114,6 +1143,7 @@ public:
 		std::lock_guard lock(fs_->mu_);
 		enter();
 		if (node_->leases.count(id_)) { throw std::logic_error("faultfs: a lease on a handle that holds one"); }
+		++fs_->ops_[std::size_t(op::lease)];
 		const fault* f = fs_->rule_for(op::lease);
 		if (f && !f->after) { detail::fail(f->error, "faultfs lease"); }
 		bool free = true;
@@ -1238,7 +1268,9 @@ public:
 	}
 	std::unique_ptr<journal::File> open_existing(std::string_view name) override { return open(name, false); }
 	std::unique_ptr<journal::File> open_existing_read_only(std::string_view name) override { return open(name, true); }
-	std::unique_ptr<journal::File> open_reclaim_candidate_read_only(std::string_view name) override { return open(name, true); }
+	// Null when the name is missing or a directory, as io.h's reclaim opens promise.
+	std::unique_ptr<journal::File> open_reclaim_candidate(std::string_view name) override { return open(name, false, true); }
+	std::unique_ptr<journal::File> open_reclaim_candidate_read_only(std::string_view name) override { return open(name, true, true); }
 	void open_existing_read_only_into(std::string_view, journal::File&) override { throw std::logic_error("reusable file open unsupported"); }
 	bool open_reclaim_candidate_read_only_into(std::string_view, journal::File&) override { throw std::logic_error("reusable candidate open unsupported"); }
 	std::unique_ptr<journal::File> create_exclusive(std::string_view name) override {
@@ -1393,12 +1425,13 @@ protected:
 	}
 
 private:
-	std::unique_ptr<journal::File> open(std::string_view name, bool read_only) {
+	std::unique_ptr<journal::File> open(std::string_view name, bool read_only, bool candidate = false) {
 		detail::check_name(name);
 		std::lock_guard lock(fs_->mu_);
 		enter();
-		if (is_directory(name)) { detail::fail(EISDIR, "faultfs open"); }
 		auto it = fs_->names_.find(path(name));
+		if (candidate && (is_directory(name) || it == fs_->names_.end())) { return nullptr; }
+		if (is_directory(name)) { detail::fail(EISDIR, "faultfs open"); }
 		if (it == fs_->names_.end()) { detail::fail(ENOENT, "faultfs open"); }
 		return std::make_unique<file>(*fs_, fs_->inodes_.at(it->second), read_only);
 	}

@@ -3,7 +3,8 @@
 
 // faultfs's additions over strata's model: directories (F4), kill, snapshot and powered_off (F6),
 // and the F7 members: link, try_lease, map_shared, preallocate, inspection and owner locks, with
-// the crash rules the design's build steps list for link, try_lease and map_shared.
+// the crash rules the design's build steps list for link, try_lease and map_shared; strata's later
+// members (power_on, operations, sync_latency) and the two behaviors settled from its copy.
 #ifndef FAULTLAB_CHECK_COUNTS
 #define FAULTLAB_CHECK_COUNTS 1  // every collection checks the counts against a full recount
 #endif
@@ -275,6 +276,143 @@ int main() {
 		CHECK_ERRNO(f->write_at(1, "b"), EIO);
 		fs.crash(0);
 		CHECK(!fs.powered_off());
+	});
+
+	// strata's later members.
+	run("power_on: the cut ends as a process crash, every byte kept", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		io.sync_directory();
+		f->write_at(0, bytes(600, 'a'));
+		f->sync();
+		f->write_at(600, bytes(400, 'b'));  // unsynced
+		auto m = f->map_shared(1000);
+		auto owner = io.acquire_owner(true);
+		fs.power_off_after(1);
+		f->write_at(1000, "c");  // the last mutation before the cut
+		CHECK_ERRNO(f->write_at(1001, "d"), EIO);
+		m->words()[5] = 'S';  // after the cut: reaches nothing
+		const auto mutations = fs.mutations();
+		fs.power_on();
+		CHECK(!fs.powered_off());
+		CHECK(fs.mutations() == mutations);
+		CHECK_ERRNO(f->size(), EIO);  // the process's handles died with it
+		CHECK(fs.view("f") == bytes(600, 'a') + bytes(400, 'b') + "c");
+		CHECK(io.acquire_owner(false) != nullptr);  // its lock released
+		auto g = io.open_existing("f");
+		CHECK(g->write_at(1001, "d") == 1);  // operations succeed again
+		CHECK(fs.view("f") == bytes(600, 'a') + bytes(400, 'b') + "cd");
+		m.reset();  // detached: its store stays lost
+		CHECK(fs.view("f")[5] == 'a');
+		fs.crash(0, {.size = ff::size_pick::durable, .sectors = ff::sector_pick::old});
+		CHECK(fs.view("f") == bytes(600, 'a'));  // what stayed unsynced is still unsynced
+		// An armed cut that has not run out ends too.
+		ff::filesystem armed;
+		ff::io aio(armed);
+		auto h = aio.create_exclusive("h");
+		armed.power_off_after(2);
+		armed.power_on();
+		auto again = aio.open_existing("h");
+		for (int i = 0; i < 4; ++i) { CHECK(again->write_at(std::uint64_t(i), "x") == 1); }
+		CHECK(armed.view("h") == "xxxx");
+	});
+	run("operations: per kind, failed ones included", [] {
+		using ff::op;
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, "ab");
+		f->write_at(2, "cd");
+		fs.add_fault({op::write, 1, EIO});
+		CHECK_ERRNO(f->write_at(4, "e"), EIO);
+		f->sync();
+		j::File* files[] = {f.get()};
+		io.order_files_and_directory(files);  // a sync (the stage) and a sync_directory
+		io.sync_directory();
+		io.link("f", "g");
+		io.replace("g", "h");
+		io.remove("h");
+		f->truncate(1);
+		f->preallocate(0, 10);
+		CHECK(f->try_lease(j::LeaseMode::Shared));
+		fs.power_off_after(0);
+		CHECK_ERRNO(f->write_at(0, "x"), EIO);  // failed by the cut
+		CHECK_ERRNO(f->sync(), EIO);
+		const std::pair<op, std::uint64_t> want[] = {{op::write, 4}, {op::sync, 3}, {op::sync_directory, 2}, {op::create, 1}, {op::replace, 1},
+			{op::remove, 1}, {op::truncate, 1}, {op::link, 1}, {op::preallocate, 1}, {op::lease, 1}};
+		std::uint64_t mutating = 0;
+		for (const auto& [kind, n] : want) {
+			if (!CHECK(fs.operations(kind) == n)) { std::fprintf(stderr, "  op %d: %llu\n", int(kind), (unsigned long long)fs.operations(kind)); }
+			mutating += kind == op::lease ? 0 : fs.operations(kind);
+		}
+		CHECK(mutating == fs.mutations());
+		CHECK(fs.syncs() == fs.operations(op::sync) + fs.operations(op::sync_directory));
+		CHECK(fs.snapshot().operations(op::write) == 4);
+		io.acquire_owner(true);  // creating owner.lock is no operation
+		CHECK(fs.operations(op::create) == 1);
+	});
+	run("sync_latency: each file sync waits at least the latency", [] {
+		using clock = std::chrono::steady_clock;
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, "x");
+		const auto latency = std::chrono::milliseconds(50);
+		fs.sync_latency(latency);
+		auto start = clock::now();
+		f->sync();
+		CHECK(clock::now() - start >= latency);
+		f->write_at(0, "y");
+		start = clock::now();
+		f->sync_data();
+		CHECK(clock::now() - start >= latency);
+		CHECK(fs.snapshot().list() == names{"f"});
+		fs.sync_latency({});
+		CHECK(fs.operations(ff::op::sync) == 2);  // the waits add no operation
+		CHECK(fs.view("f") == "y");
+	});
+
+	// The two behaviors settled from strata's copy.
+	run("a sync failing after its effect on a file written after its point keeps the flushed bytes", [] {
+		const std::string a = bytes(1024, 'a'), b = bytes(1024, 'b');
+		for (const bool staged : {true, false}) {
+			for (std::uint64_t seed = 0; seed < 8; ++seed) {
+				ff::filesystem fs;
+				ff::io io(fs);
+				auto data = io.create_exclusive("data");
+				auto other = io.create_exclusive("other");
+				io.sync_directory();
+				data->write_at(0, a);
+				other->write_at(0, "o");
+				j::File* files[] = {data.get(), other.get()};
+				if (staged) { io.order_files_and_directory(files); }
+				data->write_at(0, b);
+				fs.add_fault({ff::op::sync, 1, EIO, true});
+				CHECK_ERRNO(data->sync(), EIO);
+				CHECK(fs.view("data") == b);
+				fs.crash(seed);
+				CHECK(fs.view("data") == b);
+				if (staged) { CHECK(fs.view("other") == "o"); }  // what the point staged settled with it
+			}
+		}
+	});
+	run("reclaim-candidate opens of a missing name or a directory return null", [] {
+		ff::filesystem fs;
+		fs.make_directory("d");
+		ff::io io(fs);
+		io.create_exclusive("f")->write_at(0, "x");
+		CHECK(io.open_reclaim_candidate("missing") == nullptr);
+		CHECK(io.open_reclaim_candidate_read_only("missing") == nullptr);
+		CHECK(io.open_reclaim_candidate("d") == nullptr);
+		CHECK(io.open_reclaim_candidate_read_only("d") == nullptr);
+		auto rw = io.open_reclaim_candidate("f");
+		CHECK(rw && rw->write_at(1, "y") == 1);
+		auto ro = io.open_reclaim_candidate_read_only("f");
+		CHECK(ro && ro->size() == 2);
+		CHECK_ERRNO(ro->write_at(0, "z"), EBADF);
+		CHECK_ERRNO(io.open_existing("missing"), ENOENT);  // the plain opens still throw
+		CHECK_ERRNO(io.open_existing_read_only("d"), EISDIR);
 	});
 
 	// F7 members.
