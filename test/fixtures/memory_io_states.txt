@@ -1,6 +1,6 @@
 # journal's MemoryIO power_loss states for the sequences test/sector_test.cc checks.
 # source: journal a412175fe437b59463bcaa97ebc75429643bdc65 include/journal/memory_io.h
-# regenerate: cmake -DFAULTLAB_REGENERATE_MEMORY_IO=ON, build faultlab_memory_io_gen, run it with an output path
+# regenerate: test/fixtures/regenerate_memory_io.sh
 # format: `sequence N durable D appends A1 A2..` (byte counts, the bytes come from sector_sequences.h);
 # then one `state SIZE [zero FROM-TO..]` per state: the sequence's full image cut to SIZE with
 # the ranges [FROM, TO) zero (a lost sector). Sorted by state bytes.
