@@ -397,6 +397,53 @@ int main() {
 			}
 		}
 	});
+	run("a sync failing after its effect on a file its point did not stage (at_mark) keeps the flushed bytes", [] {
+		const std::string a = bytes(1024, 'a'), b = bytes(1024, 'b');
+		for (std::uint64_t seed = 0; seed < 32; ++seed) {
+			ff::filesystem fs;
+			ff::io io(fs);
+			auto data = io.create_exclusive("data");
+			auto other = io.create_exclusive("other");
+			io.sync_directory();
+			data->write_at(0, a);
+			other->write_at(0, "o");
+			j::File* point[] = {other.get()};
+			io.order_files_and_directory(point);
+			data->write_at(0, b);  // records the bytes before it at the point
+			fs.add_fault({ff::op::sync, 1, EIO, true});
+			CHECK_ERRNO(data->sync(), EIO);
+			CHECK(fs.view("data") == b);
+			fs.crash(seed);
+			CHECK(fs.view("data") == b);
+			CHECK(fs.view("other") == "o");
+		}
+	});
+	run("a sync failing after its effect across two ordering points, the file staged at the first only", [] {
+		const std::string a = bytes(1024, 'a'), b = bytes(1024, 'b');
+		for (std::uint64_t seed = 0; seed < 32; ++seed) {
+			ff::filesystem fs;
+			ff::io io(fs);
+			auto data = io.create_exclusive("data");
+			auto o1 = io.create_exclusive("o1");
+			auto o2 = io.create_exclusive("o2");
+			io.sync_directory();
+			data->write_at(0, a);
+			o1->write_at(0, "o");
+			j::File* first[] = {data.get(), o1.get()};
+			io.order_files_and_directory(first);
+			data->write_at(0, b);
+			o2->write_at(0, "p");
+			j::File* second[] = {o2.get()};
+			io.order_files_and_directory(second);
+			fs.add_fault({ff::op::sync, 1, EIO, true});
+			CHECK_ERRNO(data->sync(), EIO);
+			CHECK(fs.view("data") == b);
+			fs.crash(seed);
+			CHECK(fs.view("data") == b);
+			CHECK(fs.view("o1") == "o");
+			CHECK(fs.view("o2") == "p");
+		}
+	});
 	run("reclaim-candidate opens of a missing name or a directory return null", [] {
 		ff::filesystem fs;
 		fs.make_directory("d");
