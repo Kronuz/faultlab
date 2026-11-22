@@ -444,6 +444,25 @@ int main() {
 			CHECK(fs.view("o2") == "p");
 		}
 	});
+	run("a sync failing after its effect drops the at_mark a failed ordering point left behind", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, "old");
+		f->sync();
+		io.sync_directory();
+		hook h;
+		h.on_sync = [&] { f->write_at(0, "mid"); };  // a write inside the point records "old" at it
+		std::array<j::File*, 1> files{&h};
+		fs.add_fault({ff::op::sync_directory, 1, EIO});  // the point fails before its effect: its mark goes
+		CHECK_ERRNO(io.order_files_and_directory(files), EIO);
+		fs.add_fault({ff::op::sync, 1, EIO, true});
+		CHECK_ERRNO(f->sync(), EIO);  // "mid" durable
+		io.order_files_and_directory({});
+		f->write_at(0, "NEW");  // records "mid" at the new point, unless a stale "old" holds its epoch
+		fs.crash(0, {.epochs = ff::epoch_pick::none, .size = ff::size_pick::current, .sectors = ff::sector_pick::fresh});
+		CHECK(fs.view("f") == "mid");
+	});
 	run("reclaim-candidate opens of a missing name or a directory return null", [] {
 		ff::filesystem fs;
 		fs.make_directory("d");
