@@ -463,6 +463,23 @@ int main() {
 		fs.crash(0, {.epochs = ff::epoch_pick::none, .size = ff::size_pick::current, .sectors = ff::sector_pick::fresh});
 		CHECK(fs.view("f") == "mid");
 	});
+	run("a removed ordering point leaves no at_mark: a later point's crash sees the bytes before its own write", [] {
+		ff::filesystem fs;
+		ff::io io(fs);
+		auto f = io.create_exclusive("f");
+		f->write_at(0, "old");
+		f->sync();
+		io.sync_directory();
+		hook h;
+		h.on_sync = [&] { f->write_at(0, "mid"); };  // a write inside the point records "old" at it
+		std::array<j::File*, 1> files{&h};
+		fs.add_fault({ff::op::sync_directory, 1, EIO});  // the point fails before its effect and removes itself
+		CHECK_ERRNO(io.order_files_and_directory(files), EIO);
+		io.order_files_and_directory({});  // a second point at the removed one's epoch
+		f->write_at(0, "NEW");  // records "mid" at it, unless a stale "old" holds the epoch
+		fs.crash(0, {.epochs = ff::epoch_pick::none, .size = ff::size_pick::current, .sectors = ff::sector_pick::fresh});
+		CHECK(fs.view("f") == "mid");
+	});
 	run("reclaim-candidate opens of a missing name or a directory return null", [] {
 		ff::filesystem fs;
 		fs.make_directory("d");
