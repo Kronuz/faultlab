@@ -372,6 +372,13 @@ private:
 		marks_.clear();
 		for (auto& [id, node] : inodes_) { node->at_mark.clear(); }
 	}
+	// Removes the newest ordering point and the at_mark records of its epoch.
+	void drop_last_mark() {
+		marks_.pop_back();
+		for (auto& [id, node] : inodes_) {
+			std::erase_if(node->at_mark, [&](const auto& r) { return r.first >= marks_.size(); });
+		}
+	}
 	// Applies a logged namespace op to `names`, as replay and settling do.
 	static void apply(std::map<std::string, std::uint64_t>& names, const logged& e) {
 		switch (e.kind) {

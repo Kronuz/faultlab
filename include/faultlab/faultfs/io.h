@@ -171,7 +171,7 @@ public:
 		++fs_->calls_;
 		const fault* f = fs_->check(op::sync_directory);
 		if (f && !f->after) {
-			if (!staged) { fs_->marks_.pop_back(); }
+			if (!staged) { fs_->drop_last_mark(); }
 			detail::fail(f->error, "faultfs order_files_and_directory");
 		}
 		if (f) { detail::fail(f->error, "faultfs order_files_and_directory"); }
