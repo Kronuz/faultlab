@@ -288,11 +288,13 @@ private:
 		if (!node.dirty) { return; }
 		node.stage(marks_.size(), node.synced());
 		strays_.insert(node.id);
+		pushed_.insert(node.id);
 	}
 	// Ordering point `epoch` orders what the files pushed before it (a device-wide barrier); a
-	// file written since its push records its bytes at the point too, which a crash cut there may keep.
+	// file written since its push records its bytes at the point too, which a crash cut there may
+	// keep. Only pushes: a stray an earlier point staged keeps that point's bytes as its cut.
 	void order_pushed(std::size_t epoch) {
-		for (const std::uint64_t id : strays_) {
+		for (const std::uint64_t id : pushed_) {
 			const auto it = inodes_.find(id);
 			if (it == inodes_.end()) { continue; }
 			auto& node = *it->second;
@@ -448,6 +450,7 @@ private:
 				}
 			}
 			strays_.clear();
+			pushed_.clear();
 			return;
 		}
 		for (auto& [id, node] : inodes_) {
@@ -457,6 +460,7 @@ private:
 		log_.erase(log_.begin(), log_.begin() + std::ptrdiff_t(marks_.back()));
 		clear_marks();
 		strays_.clear();
+		pushed_.clear();
 		recount();
 	}
 	// sync_directory: what the ordering points staged, then `directory`'s namespace, durable. Its
@@ -615,6 +619,7 @@ private:
 		log_.clear();
 		clear_marks();
 		strays_.clear();
+		pushed_.clear();
 		for (auto& [id, node] : inodes_) { node->staged.clear(); }
 		recount();
 		collect();
@@ -676,6 +681,7 @@ private:
 		log_ = o.log_;
 		marks_ = o.marks_;
 		strays_ = o.strays_;
+		pushed_ = o.pushed_;
 		rules_ = o.rules_;
 		for (const auto& m : o.media_) {
 			auto c = m;
@@ -713,6 +719,7 @@ private:
 		log_ = std::move(o.log_);
 		marks_ = std::move(o.marks_);
 		strays_ = std::move(o.strays_);
+		pushed_ = std::move(o.pushed_);
 		unreferenced_ = std::move(o.unreferenced_);
 		used_ = o.used_;
 		rules_ = std::move(o.rules_);
@@ -750,6 +757,7 @@ private:
 	std::vector<logged> log_;
 	std::vector<std::size_t> marks_;  // per ordering point: log_ entries before it are staged ahead of those after
 	std::set<std::uint64_t> strays_;  // inodes staged with no ordering point: a plain sync's, or after another thread's sync_directory settled theirs
+	std::set<std::uint64_t> pushed_;  // the strays a plain sync staged (push), which the next ordering point orders
 	std::set<std::uint64_t> unreferenced_;  // inodes with no refs, freed once no handle holds them
 	std::uint64_t used_ = 0;  // every inode's footprint, as accounted
 	std::vector<rule> rules_;

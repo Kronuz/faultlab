@@ -13,6 +13,7 @@
 
 #include "check.h"
 
+#include <functional>
 #include <set>
 
 namespace ff = kronuz::faultlab;
@@ -32,6 +33,17 @@ bool exists(filesystem& fs, const std::string& name) {
 	}
 	return false;
 }
+
+// A foreign File whose sync() runs `on_sync`: another thread's call between an ordering point's
+// steps, while faultfs holds no lock.
+struct injector final : j::File {
+	std::function<void()> on_sync;
+	std::uint64_t size() override { return 0; }
+	std::size_t read_at(std::uint64_t, std::span<char>) override { return 0; }
+	std::size_t write_at(std::uint64_t, std::string_view b) override { return b.size(); }
+	void truncate(std::uint64_t) override {}
+	void sync() override { on_sync(); }
+};
 
 }  // namespace
 
@@ -565,6 +577,34 @@ int main() {
 		fs.add_fault({op::sync, 1, EIO});
 		CHECK_ERRNO(f->sync(), EIO);
 		CHECK(fs.view("f") == std::string(512, 'a'));  // the unsynced write dropped, the pushed bytes kept
+	});
+	run("full mode: a stray staged after another thread's directory sync keeps its point's bytes ahead of a later write", [] {
+		std::set<std::string> seen;
+		for (std::uint64_t seed = 0; seed < 256; ++seed) {
+			filesystem fs;
+			io d(fs);
+			auto a = d.create_exclusive("a");
+			CHECK(a->write_at(0, std::string(512, 'o')) == 512);
+			a->sync();
+			d.sync_directory();
+			CHECK(a->write_at(0, std::string(512, 'A')) == 512);
+			injector other;  // settles the point before `a` stages: `a` becomes a stray
+			other.on_sync = [&] {
+				d.create_exclusive("x");
+				d.sync_directory();
+			};
+			std::vector<j::File*> listed{&other, a.get()};
+			d.order_files_and_directory(listed);
+			CHECK(a->write_at(512, std::string(512, 'X')) == 512);
+			d.order_files_and_directory({});  // a new point, whose epoch is the stray's
+			d.create_exclusive("later");
+			fs.crash(seed);
+			const std::string v(fs.view("a"));
+			const bool x = v.size() > 512 && v[512] == 'X';
+			CHECK(!x || v[0] == 'A');  // no crash keeps X without the stray's A
+			seen.insert(std::string(1, v[0]) + (x ? "X" : ""));
+		}
+		CHECK(seen.count("AX") && seen.count("A"));
 	});
 	return faultlab_test::verdict();
 }

@@ -54,9 +54,12 @@ The default is full on the host, so a user that never sets a mode sees the calls
 An ordering point stages whatever its call, since the contract promises it only orders.
 
 A plain fsync on macOS pushes the file's synced bytes: they wait staged at the next ordering
-point's epoch (the file joins `strays_`), so that point orders them ahead of later changes, as a
-device-wide barrier orders everything the drive received before it. A file written again
-between its push and the point records its bytes at the point in `at_mark`, which `as_of`
+point's epoch (the file joins `strays_` and `pushed_`), so that point orders them ahead of later
+changes, as a device-wide barrier orders everything the drive received before it. The plain model
+holds where F_BARRIERFSYNC orders, which Apple guarantees only on its own SSDs (completion's
+`posix_volume.h` warns elsewhere); on other storage it is kinder about order than the drive. A file written again
+between its push and the point records its bytes at the point in `at_mark` (pushes only: a stray
+an earlier point staged keeps that point's bytes as its cut), which `as_of`
 prefers at one epoch, so a crash cut at that point may keep the later write. A plain directory
 sync changes nothing. Nothing settles until a full sync flushes the device, which settles every
 push and every staged epoch; in plain mode on macOS the epochs and their staged copies
