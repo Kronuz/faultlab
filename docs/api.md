@@ -26,6 +26,7 @@ The model: an in-memory device holding a root directory and its subdirectories. 
 | `add_media_fault(path, media, begin, end, times = 0)` / `media_hits()` | Reads overlapping `[begin, end)` fail (`read_error`) or flip a bit (`bit_flip`). |
 | `short_writes(max_bytes)` | Each write stores at most `max_bytes` and returns the count. |
 | `damage_writes(min, at, count = 1)` / `damaged_writes()` | Silent damage: a flipped bit `at` bytes into each of the next `count` writes of at least `min` bytes. |
+| `set_flush_mode(flush_mode, sync_platform = host_platform)` / `sync_call_at(sync_site)` | The flush mode (`full`, `plain`) and platform (`macos`, `linux_kernel`, `other`) whose sync calls the model makes, and the call (`fsync`, `fdatasync`, `full_fsync`, `barrier_fsync`) at a site (`file`, `data`, `directory`, `order`). Default: `full` on the host. macOS's plain fsync survives `kill()` but a `crash()` may drop it; every other file or directory sync persists. `call_for(site, mode, platform)` and `persists(call, platform)` are the table ([crash-model.md](mechanisms/crash-model.md#plain-and-full-syncs)). |
 | `set_capacity(bytes)` / `used()` | `ENOSPC` past the capacity; `used` counts bytes and preallocated extents. |
 | `classify(FilesystemClass)`, `set_trust(DirectoryTrust)`, `map_files(bool)` | What `io` reports for `directory_filesystem`, `directory_trust`, and whether `File::map` maps. |
 | `view(path) const` | The current bytes of a file, valid until the next change to it. |
@@ -57,8 +58,9 @@ when it is missing); its files are `journal::File`s. The whole seam is modeled:
   for a directory). A directory refuses `remove` and `link` (`EPERM`) and `open` (`EISDIR`). The
   reclaim-candidate opens (`open_reclaim_candidate`, its read-only form) return null for a missing
   name or a directory, as `io.h` says; the plain opens throw.
-- `sync` and `sync_directory`; a `sync` that fails after its effect leaves the flushed bytes
-  durable, with what an ordering point staged before them; the group syncs (`sync_files`, `sync_data_files`,
+- `sync`, `sync_data` and `sync_directory`, each as its call in the flush mode; a `sync` that
+  fails after its effect leaves the flushed bytes durable, with what an ordering point staged
+  before them (pushed, with a plain call on macOS); the group syncs (`sync_files`, `sync_data_files`,
   `sync_files_and_directory`) are the seam's defaults over them; `order_files_and_directory` is
   the ordering point that stages each file ahead of later changes.
 - `preallocate` (a mutation; reserves space), `map` (read-only, with `map_files`),

@@ -55,6 +55,48 @@ struct crash_policy {
 	sector_pick sectors = sector_pick::coin;
 };
 
+// The sync calls completion's PosixIO makes, chosen by its flush mode and the platform
+// (filesystem::set_flush_mode): which call a sync site makes and whether it survives a power cut.
+enum class flush_mode { full, plain };
+enum class sync_platform { macos, linux_kernel, other };
+enum class sync_site { file, data, directory, order };  // File::sync, File::sync_data, IO::sync_directory, an ordering point
+enum class sync_call { fsync, fdatasync, full_fsync, barrier_fsync };
+
+#if defined(__APPLE__)
+inline constexpr sync_platform host_platform = sync_platform::macos;
+#elif defined(__linux__)
+inline constexpr sync_platform host_platform = sync_platform::linux_kernel;
+#else
+inline constexpr sync_platform host_platform = sync_platform::other;
+#endif
+
+// macOS: full is F_FULLFSYNC everywhere; plain is fsync, and F_BARRIERFSYNC at an ordering point.
+// Linux: fsync, and fdatasync for File::sync_data, in either mode. Elsewhere: fsync.
+constexpr sync_call call_for(sync_site site, flush_mode mode, sync_platform platform) {
+	switch (platform) {
+	case sync_platform::macos:
+		if (mode == flush_mode::full) { return sync_call::full_fsync; }
+		return site == sync_site::order ? sync_call::barrier_fsync : sync_call::fsync;
+	case sync_platform::linux_kernel:
+		return site == sync_site::data ? sync_call::fdatasync : sync_call::fsync;
+	case sync_platform::other:
+		break;
+	}
+	return sync_call::fsync;
+}
+
+// Whether what the call covers survives a power cut: macOS's fsync leaves it in the drive's cache
+// and F_BARRIERFSYNC only orders it; every other call flushes the drive.
+constexpr bool persists(sync_call call, sync_platform platform) {
+	switch (call) {
+	case sync_call::fsync: return platform != sync_platform::macos;
+	case sync_call::barrier_fsync: return false;
+	case sync_call::fdatasync:
+	case sync_call::full_fsync: return true;
+	}
+	return true;
+}
+
 class filesystem;
 
 namespace detail {
@@ -67,7 +109,9 @@ struct inode {
 	std::string current;  // what reads return
 	std::string durable;  // what survives a crash for certain
 	bool dirty = false;
-	std::vector<std::pair<std::size_t, std::string>> staged;  // per ordering point (its epoch), the bytes it ordered ahead of later changes
+	// Per ordering point (its epoch), the bytes it ordered ahead of later changes; a plain sync's
+	// bytes, in the drive's cache, wait at the next point's epoch.
+	std::vector<std::pair<std::size_t, std::string>> staged;
 	std::vector<std::pair<std::size_t, std::string>> at_mark;  // per ordering point a later write followed, the bytes before that write
 	std::uint64_t mapped = 0;  // the longest live mapping's length (a real one would fault past a cut)
 	std::uint64_t mappings = 0;
@@ -132,10 +176,11 @@ struct inode {
 		}
 	}
 	// The bytes as of ordering point `epoch`: a later write never survives without that epoch.
+	// At one epoch, at_mark wins: a pushed file's bytes at the point, over what it pushed.
 	const std::string* as_of(std::size_t epoch) const {
 		const std::string* best = nullptr;
 		std::size_t at = ~std::size_t(0);
-		for (const auto* v : {&staged, &at_mark}) {
+		for (const auto* v : {&at_mark, &staged}) {
 			for (const auto& [e, bytes] : *v) {
 				if (e >= epoch && e < at) {
 					at = e;
@@ -159,6 +204,14 @@ struct inode {
 		lost.clear();
 		unmapped.clear();
 		dirty = current != durable;
+	}
+	// Stages `bytes` ahead of the changes after ordering point `epoch`, over what it staged before.
+	void stage(std::size_t epoch, std::string bytes) {
+		if (!staged.empty() && staged.back().first == epoch) {
+			staged.back().second = std::move(bytes);
+		} else {
+			staged.emplace_back(epoch, std::move(bytes));
+		}
 	}
 	// What the ordering points staged becomes durable; a write after them stays unsynced.
 	void settle() {

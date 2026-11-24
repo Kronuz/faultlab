@@ -36,6 +36,9 @@ C++, header-only, needs completion/io.h only       Python, stdlib only, python3 
 - **Fixed picks beside the coins.** `crash_policy` forces a field's coins (every sector old, every
   name durable, every epoch kept) and `size_pick::sector` cuts an unsynced append at any sector
   boundary, the states journal's MemoryIO and storage's CrashIO reach.
+- **Plain and full syncs.** `set_flush_mode` picks completion's flush mode and the platform:
+  macOS's plain fsync survives a process crash but a power cut may drop it, F_BARRIERFSYNC only
+  orders, and F_FULLFSYNC, Linux's fsync and fdatasync persist. Full on the host by default.
 - **Process death, snapshots and power cuts.** `kill()` ends a process and keeps what the device
   holds; `snapshot()` copies the model to sweep cut points from one prefix; `power_off_after(n)`
   fails every mutation after the n-th, `powered_off()` says so, and `power_on()` ends the cut as a
@@ -139,8 +142,6 @@ Not for:
 - **Proving what a real filesystem does.** faultfs models the IO contract (an independent coin
   per sector and per namespace operation), which allows more than ext4, XFS or APFS leave; the
   mapping from the contract to fsync, `F_FULLFSYNC` and barriers is completion's to prove.
-- **Weakened syncs.** faultfs models durable syncs only; a process that weakens them is not
-  crash-tested.
 - **Concurrent stores into a shared mapping while another thread calls in.** A fold reads the
   mapping without synchronization, as the page cache would.
 

@@ -177,6 +177,21 @@ public:
 		std::lock_guard lock(mu_);
 		capacity_ = bytes;
 	}
+	// The flush mode completion's PosixIO runs in and the platform whose sync calls it makes
+	// (default: full, on this host). A file or directory sync whose call persists makes its bytes
+	// or names durable; macOS's plain fsync leaves them in the drive's cache, where a kill keeps
+	// them and a crash may drop them, ordered ahead of the next ordering point. An ordering point
+	// stages whatever its call: the contract promises it only orders.
+	void set_flush_mode(flush_mode mode, sync_platform platform = host_platform) {
+		std::lock_guard lock(mu_);
+		flush_ = mode;
+		platform_ = platform;
+	}
+	// The call a sync at `site` makes under the flush mode and platform.
+	sync_call sync_call_at(sync_site site) const {
+		std::lock_guard lock(mu_);
+		return call_for(site, flush_, platform_);
+	}
 
 	// Power loss: rebuilds the state storage could hold, chosen by `seed` and `policy`; every open
 	// handle becomes stale, owner locks and leases are released and shared mappings detach.
@@ -265,6 +280,26 @@ private:
 		check_counts();
 		return used_;
 	}
+	// Whether a sync at `site` reaches the medium, not just the drive's cache.
+	bool durable_at(sync_site site) const { return persists(call_for(site, flush_, platform_), platform_); }
+	// A sync whose call stops at the drive's cache: `node`'s synced bytes wait for the next
+	// ordering point, which orders them ahead of later changes, and a crash may drop them.
+	void push(detail::inode& node) {
+		if (!node.dirty) { return; }
+		node.stage(marks_.size(), node.synced());
+		strays_.insert(node.id);
+	}
+	// Ordering point `epoch` orders what the files pushed before it (a device-wide barrier); a
+	// file written since its push records its bytes at the point too, which a crash cut there may keep.
+	void order_pushed(std::size_t epoch) {
+		for (const std::uint64_t id : strays_) {
+			const auto it = inodes_.find(id);
+			if (it == inodes_.end()) { continue; }
+			auto& node = *it->second;
+			if (node.staged.empty() || node.staged.back().first != epoch) { continue; }
+			if (std::string now = node.flushed(); now != node.staged.back().second) { node.at_mark.emplace_back(epoch, std::move(now)); }
+		}
+	}
 	bool directory_exists(std::string_view path) const { return path.empty() || directories_.count(std::string(path)) != 0; }
 	std::vector<std::string> entries(std::string_view directory) const {
 		std::vector<std::string> out;
@@ -349,7 +384,7 @@ private:
 		check_counts();
 	}
 	// FAULTLAB_CHECK_COUNTS: every count against a full recount, and no inode staged without an
-	// ordering point unless strays_ lists it (settle_directory relies on it).
+	// ordering point unless strays_ lists it (settle_staged relies on it).
 	void check_counts() const {
 #if FAULTLAB_CHECK_COUNTS
 		std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> want;  // refs, links
@@ -401,10 +436,20 @@ private:
 			break;
 		}
 	}
-	// What an ordering point staged becomes durable: its files' bytes and the namespace changes
-	// logged before it. Later changes stay as they were, unordered.
+	// A device flush: what the ordering points staged becomes durable, their files' bytes and the
+	// namespace changes logged before them, and what waits for a next point (strays_). Later
+	// changes stay as they were, unordered.
 	void settle_staged() {
-		if (marks_.empty()) { return; }
+		if (marks_.empty()) {
+			for (const std::uint64_t id : strays_) {
+				if (auto it = inodes_.find(id); it != inodes_.end() && !it->second->staged.empty()) {
+					it->second->settle();
+					account(*it->second);
+				}
+			}
+			strays_.clear();
+			return;
+		}
 		for (auto& [id, node] : inodes_) {
 			if (!node->staged.empty()) { node->settle(); }
 		}
@@ -418,10 +463,6 @@ private:
 	// durable names differ from its current ones only at the paths its logged ops touched.
 	void settle_directory(const std::string& directory) {
 		settle_staged();
-		for (const std::uint64_t id : strays_) {
-			if (auto it = inodes_.find(id); it != inodes_.end() && !it->second->staged.empty()) { it->second->settle(); }
-		}
-		strays_.clear();
 		std::set<std::string> touched;
 		std::vector<std::uint64_t> dropped;
 		std::erase_if(log_, [&](const logged& e) {
@@ -658,6 +699,8 @@ private:
 		calls_ = o.calls_;
 		syncs_ = o.syncs_;
 		power_left_ = o.power_left_;
+		flush_ = o.flush_;
+		platform_ = o.platform_;
 		std::copy(std::begin(o.ops_), std::end(o.ops_), ops_);
 		sync_latency_.store(o.sync_latency_.load());
 		recount();
@@ -694,6 +737,8 @@ private:
 		calls_ = o.calls_;
 		syncs_ = o.syncs_;
 		power_left_ = o.power_left_;
+		flush_ = o.flush_;
+		platform_ = o.platform_;
 		std::copy(std::begin(o.ops_), std::end(o.ops_), ops_);
 		sync_latency_.store(o.sync_latency_.load());
 	}
@@ -704,7 +749,7 @@ private:
 	std::set<std::string> directories_;  // every directory but the root, durable at once
 	std::vector<logged> log_;
 	std::vector<std::size_t> marks_;  // per ordering point: log_ entries before it are staged ahead of those after
-	std::set<std::uint64_t> strays_;  // inodes staged after their ordering point settled (another thread's sync_directory between)
+	std::set<std::uint64_t> strays_;  // inodes staged with no ordering point: a plain sync's, or after another thread's sync_directory settled theirs
 	std::set<std::uint64_t> unreferenced_;  // inodes with no refs, freed once no handle holds them
 	std::uint64_t used_ = 0;  // every inode's footprint, as accounted
 	std::vector<rule> rules_;
@@ -729,6 +774,8 @@ private:
 	std::uint64_t ops_[std::size_t(op::lease) + 1] = {};  // per kind
 	std::atomic<std::int64_t> sync_latency_{0};  // microseconds
 	std::optional<std::uint64_t> power_left_;
+	flush_mode flush_ = flush_mode::full;
+	sync_platform platform_ = host_platform;
 };
 
 namespace detail {

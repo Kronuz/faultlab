@@ -157,6 +157,7 @@ public:
 			fs_->fold_locked();
 			epoch = fs_->marks_.size();
 			fs_->marks_.push_back(fs_->log_.size());
+			fs_->order_pushed(epoch);
 		}
 		bool staged = false;
 		for (auto* f : files) {
@@ -176,13 +177,14 @@ public:
 		}
 		if (f) { detail::fail(f->error, "faultfs order_files_and_directory"); }
 	}
-	// This directory's namespace changes durable, with what the ordering points staged.
+	// This directory's namespace changes durable, with what the ordering points staged; with a
+	// call that stops at the drive's cache (macOS's plain fsync), nothing changes.
 	void sync_directory() override {
 		std::lock_guard lock(fs_->mu_);
 		enter();
 		const fault* f = fs_->check(op::sync_directory);
 		if (f && !f->after) { detail::fail(f->error, "faultfs sync_directory"); }
-		fs_->settle_directory(directory_);
+		if (fs_->durable_at(sync_site::directory)) { fs_->settle_directory(directory_); }
 		fs_->collect();
 		if (f) { detail::fail(f->error, "faultfs sync_directory"); }
 	}

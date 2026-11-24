@@ -24,6 +24,12 @@
 // sync, and never survives without them. Ordering points chain: a crash keeps the epochs before
 // some point whole, that point's epoch in part, and nothing after it.
 //
+// Plain and full syncs: set_flush_mode names completion's flush mode and the platform, so each
+// sync makes the call PosixIO makes (sync_call_at). F_FULLFSYNC, and fsync or fdatasync off macOS,
+// persist as above; macOS's plain fsync survives a kill but not a crash, its bytes ordered ahead
+// of the next ordering point only; a plain directory sync changes nothing. The default, full on
+// the host, is every sync as above.
+//
 // Faults: a rule fails the n-th operation of a kind, before or after its effect, with EIO or
 // ENOSPC; a capacity fails writes and preallocations that grow the total past it with ENOSPC;
 // short writes return part of the request. A failed File::sync drops the file's unsynced bytes;

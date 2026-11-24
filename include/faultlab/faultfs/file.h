@@ -141,37 +141,8 @@ public:
 		if (length > node_->current.size()) { detail::fail(EINVAL, "faultfs map_shared past the end"); }
 		return std::make_shared<shared_mapping>(*fs_, node_, length);
 	}
-	void sync() override {
-		if (const auto us = fs_->sync_latency_.load(std::memory_order_relaxed)) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
-		std::lock_guard lock(fs_->mu_);
-		const accounted resized{*fs_, *node_};
-		enter();
-		if (const fault* f = fs_->check(op::sync)) {
-			if (f == &filesystem::power_off_) { detail::fail(f->error, "faultfs sync"); }
-			// A failed fsync loses the unsynced bytes; reads see the durable ones, or with `keep`
-			// still the cached ones. One that failed after its effect flushed them, and what an
-			// ordering point staged before them.
-			if (f->after) {
-				node_->durable = node_->synced();
-				node_->staged.clear();
-				node_->at_mark.clear();
-				fs_->settle_staged();
-			}
-			if (f->keep && !f->after) {
-				node_->lose_unsynced();
-				node_->dirty = false;
-			} else {
-				node_->drop_unstaged();
-				fs_->refresh(*node_, 0, node_->current.size());
-			}
-			detail::fail(f->error, "faultfs sync");
-		}
-		node_->durable = node_->synced();
-		node_->dirty = !node_->unmapped.empty();
-		node_->staged.clear();
-		node_->at_mark.clear();
-		fs_->settle_staged();
-	}
+	void sync() override { flush(sync_site::file); }
+	void sync_data() override { flush(sync_site::data); }
 	journal::EntryInspection inspect() override {
 		std::lock_guard lock(fs_->mu_);
 		enter();
@@ -219,14 +190,50 @@ public:
 			}
 			detail::fail(f->error, "faultfs stage");
 		}
+		std::erase_if(node_->at_mark, [&](const auto& r) { return r.first == epoch; });  // the staged bytes are the point's
 		if (node_->dirty) {
-			node_->staged.emplace_back(epoch, node_->flushed());
-			if (epoch >= fs_->marks_.size()) { fs_->strays_.insert(node_->id); }  // settled at the next sync_directory
+			node_->stage(epoch, node_->flushed());
+			if (epoch >= fs_->marks_.size()) { fs_->strays_.insert(node_->id); }  // settled at the next device flush
 		}
 		node_->unmapped.clear();  // the point orders the mapped stores as writes made here
 	}
 
 private:
+	// File::sync and sync_data, as the call the flush mode makes at `site`: one that persists
+	// makes the synced bytes durable with what the ordering points staged (a device flush); one
+	// that stops at the drive's cache pushes them (filesystem::push).
+	void flush(sync_site site) {
+		if (const auto us = fs_->sync_latency_.load(std::memory_order_relaxed)) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
+		std::lock_guard lock(fs_->mu_);
+		const accounted resized{*fs_, *node_};
+		enter();
+		auto effect = [&] {
+			if (!fs_->durable_at(site)) {
+				fs_->push(*node_);
+				return;
+			}
+			node_->durable = node_->synced();
+			node_->dirty = !node_->unmapped.empty();
+			node_->staged.clear();
+			node_->at_mark.clear();
+			fs_->settle_staged();
+		};
+		if (const fault* f = fs_->check(op::sync)) {
+			if (f == &filesystem::power_off_) { detail::fail(f->error, "faultfs sync"); }
+			// A failed fsync loses the unsynced bytes; reads see the durable ones (or the pushed
+			// ones), or with `keep` still the cached ones. One that failed after its effect had it.
+			if (f->after) { effect(); }
+			if (f->keep && !f->after) {
+				node_->lose_unsynced();
+				node_->dirty = false;
+			} else {
+				node_->drop_unstaged();
+				fs_->refresh(*node_, 0, node_->current.size());
+			}
+			detail::fail(f->error, "faultfs sync");
+		}
+		effect();
+	}
 	class mapping final : public journal::Mapping {
 	public:
 		mapping(filesystem& fs, std::shared_ptr<detail::inode> node) : fs_(&fs), node_(std::move(node)), copy_(node_->current) {

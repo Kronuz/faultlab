@@ -5,7 +5,7 @@
 // synced data and namespace survive a crash; unsynced data and namespace changes survive or not,
 // per sector and per op, both outcomes reachable; faults fire before or after their effect; a
 // failed sync drops unsynced bytes; capacity and short writes; stale handles; the owner locks;
-// ordering points.
+// ordering points. Then plain and full syncs, one case per sync call.
 #ifndef FAULTLAB_CHECK_COUNTS
 #define FAULTLAB_CHECK_COUNTS 1
 #endif
@@ -387,6 +387,184 @@ int main() {
 			}
 		}
 		CHECK(later > 0 && none > 0);
+	});
+	// Plain and full syncs (filesystem::set_flush_mode), one case per call completion's PosixIO
+	// makes: fsync, F_FULLFSYNC and F_BARRIERFSYNC on macOS, fsync and fdatasync on Linux.
+	run("the default is full on this host: every sync persists", [] {
+		filesystem fs;
+		CHECK(fs.sync_call_at(ff::sync_site::file) == ff::call_for(ff::sync_site::file, ff::flush_mode::full, ff::host_platform));
+		for (auto site : {ff::sync_site::file, ff::sync_site::data, ff::sync_site::directory}) {
+			CHECK(ff::persists(fs.sync_call_at(site), ff::host_platform));
+		}
+	});
+	// A file `a` durable at 512 'o' bytes, then 1024 'n' bytes synced by `sync` in `mode` on
+	// `platform`: 'n' when the crash kept the sync, 'o' when it dropped it, '?' otherwise.
+	auto synced_then_crashed = [](ff::flush_mode mode, ff::sync_platform platform, std::uint64_t seed, bool data, bool kill) {
+		filesystem fs;
+		io d(fs);
+		auto f = d.create_exclusive("a");
+		f->write_at(0, std::string(512, 'o'));
+		f->sync();
+		d.sync_directory();
+		fs.set_flush_mode(mode, platform);
+		f->write_at(0, std::string(1024, 'n'));
+		data ? f->sync_data() : f->sync();
+		if (kill) {
+			fs.kill();
+		} else {
+			fs.crash(seed);
+		}
+		const std::string v(fs.view("a"));
+		return v == std::string(1024, 'n') ? 'n' : v.substr(0, 512) == std::string(512, 'o') ? 'o' : '?';
+	};
+	run("macOS fsync (plain): a kill keeps the synced bytes, a crash may drop them", [&] {
+		filesystem fs;
+		fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+		CHECK(fs.sync_call_at(ff::sync_site::file) == ff::sync_call::fsync);
+		CHECK(fs.sync_call_at(ff::sync_site::data) == ff::sync_call::fsync);
+		CHECK(fs.sync_call_at(ff::sync_site::directory) == ff::sync_call::fsync);
+		for (bool data : {false, true}) {
+			CHECK(synced_then_crashed(ff::flush_mode::plain, ff::sync_platform::macos, 0, data, true) == 'n');
+			std::set<char> seen;
+			for (std::uint64_t seed = 0; seed < 64; ++seed) { seen.insert(synced_then_crashed(ff::flush_mode::plain, ff::sync_platform::macos, seed, data, false)); }
+			CHECK(seen.count('n') && seen.count('o'));  // both outcomes: kept and dropped
+		}
+	});
+	run("macOS F_FULLFSYNC (full): every crash keeps the synced bytes", [&] {
+		filesystem fs;
+		fs.set_flush_mode(ff::flush_mode::full, ff::sync_platform::macos);
+		for (auto site : {ff::sync_site::file, ff::sync_site::data, ff::sync_site::directory, ff::sync_site::order}) { CHECK(fs.sync_call_at(site) == ff::sync_call::full_fsync); }
+		for (bool data : {false, true}) {
+			for (std::uint64_t seed = 0; seed < 64; ++seed) { CHECK(synced_then_crashed(ff::flush_mode::full, ff::sync_platform::macos, seed, data, false) == 'n'); }
+		}
+	});
+	run("Linux fsync and fdatasync: plain makes the full calls, and every crash keeps the bytes", [&] {
+		for (auto mode : {ff::flush_mode::plain, ff::flush_mode::full}) {
+			filesystem fs;
+			fs.set_flush_mode(mode, ff::sync_platform::linux_kernel);
+			CHECK(fs.sync_call_at(ff::sync_site::file) == ff::sync_call::fsync);
+			CHECK(fs.sync_call_at(ff::sync_site::data) == ff::sync_call::fdatasync);
+			CHECK(fs.sync_call_at(ff::sync_site::directory) == ff::sync_call::fsync);
+			CHECK(fs.sync_call_at(ff::sync_site::order) == ff::sync_call::fsync);
+			for (bool data : {false, true}) {
+				for (std::uint64_t seed = 0; seed < 64; ++seed) { CHECK(synced_then_crashed(mode, ff::sync_platform::linux_kernel, seed, data, false) == 'n'); }
+			}
+		}
+		filesystem other;
+		other.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::other);
+		CHECK(other.sync_call_at(ff::sync_site::data) == ff::sync_call::fsync);
+		CHECK(synced_then_crashed(ff::flush_mode::plain, ff::sync_platform::other, 7, true, false) == 'n');
+	});
+	run("macOS fsync of a directory (plain): a kill keeps its names, a crash may drop them", [] {
+		std::set<bool> seen;
+		for (std::uint64_t seed = 0; seed < 64; ++seed) {
+			filesystem fs;
+			fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+			io d(fs);
+			d.create_exclusive("a")->sync();
+			d.sync_directory();
+			auto again = fs.snapshot();
+			again.kill();
+			CHECK(exists(again, "a"));
+			fs.crash(seed);
+			seen.insert(exists(fs, "a"));
+		}
+		CHECK(seen.count(true) && seen.count(false));
+	});
+	run("macOS F_BARRIERFSYNC (plain ordering point): orders, persists nothing, and a plain directory sync settles nothing", [] {
+		std::set<std::pair<bool, bool>> seen;  // seg holds its bytes, later exists
+		for (std::uint64_t seed = 0; seed < 256; ++seed) {
+			filesystem fs;
+			fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+			CHECK(fs.sync_call_at(ff::sync_site::order) == ff::sync_call::barrier_fsync);
+			io d(fs);
+			auto seg = d.create_exclusive("seg");
+			CHECK(seg->write_at(0, std::string(512, 's')) == 512);
+			std::vector<j::File*> staged{seg.get()};
+			d.order_files_and_directory(staged);
+			d.create_exclusive("later");
+			d.sync_directory();
+			fs.crash(seed);
+			const bool whole = exists(fs, "seg") && fs.view("seg") == std::string(512, 's');
+			const bool later = exists(fs, "later");
+			CHECK(!later || whole);  // the point holds: nothing after it without what it staged
+			seen.insert({whole, later});
+		}
+		CHECK(seen.count({false, false}) && seen.count({true, false}) && seen.count({true, true}));
+	});
+	run("macOS plain: an ordering point orders what a file pushed before it, device-wide", [] {
+		std::set<std::pair<bool, bool>> seen;  // log holds its bytes, later exists
+		for (std::uint64_t seed = 0; seed < 256; ++seed) {
+			filesystem fs;
+			io d(fs);
+			auto log = d.create_exclusive("log");
+			d.sync_directory();
+			fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+			CHECK(log->write_at(0, std::string(512, 'e')) == 512);
+			log->sync();
+			d.order_files_and_directory({});  // log is not listed
+			d.create_exclusive("later");
+			fs.crash(seed);
+			const bool kept = fs.view("log") == std::string(512, 'e');
+			const bool later = exists(fs, "later");
+			CHECK(!later || kept);
+			seen.insert({kept, later});
+		}
+		CHECK(seen.count({false, false}) && seen.count({true, false}) && seen.count({true, true}));
+	});
+	run("macOS plain: a pushed file written again before the point may keep that write at a cut there", [] {
+		std::set<std::string> seen;
+		for (std::uint64_t seed = 0; seed < 512; ++seed) {
+			filesystem fs;
+			io d(fs);
+			auto f = d.create_exclusive("f");
+			d.sync_directory();
+			fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+			CHECK(f->write_at(0, std::string(512, 'a')) == 512);
+			f->sync();
+			CHECK(f->write_at(512, std::string(512, 'b')) == 512);
+			d.order_files_and_directory({});
+			CHECK(f->write_at(1024, std::string(512, 'c')) == 512);
+			fs.crash(seed);
+			const std::string v(fs.view("f"));
+			std::string shape;
+			for (std::size_t at = 0; at < v.size(); at += 512) { shape += v[at] ? v[at] : '0'; }
+			CHECK(shape.find('c') == std::string::npos || shape[0] == 'a');  // no write after the point without the push before it
+			seen.insert(shape);
+		}
+		CHECK(seen.count("0b"));  // the push lost with its point, the later write kept: a cut at the point
+		CHECK(seen.count("abc") && seen.count(""));
+	});
+	run("a full sync after plain ones flushes the drive: every push becomes durable", [] {
+		for (std::uint64_t seed = 0; seed < 64; ++seed) {
+			filesystem fs;
+			io d(fs);
+			auto a = d.create_exclusive("a");
+			auto b = d.create_exclusive("b");
+			d.sync_directory();
+			fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+			CHECK(a->write_at(0, std::string(512, 'a')) == 512);
+			a->sync();
+			fs.set_flush_mode(ff::flush_mode::full, ff::sync_platform::macos);
+			CHECK(b->write_at(0, std::string(512, 'b')) == 512);
+			b->sync();
+			fs.crash(seed);
+			CHECK(fs.view("a") == std::string(512, 'a'));
+			CHECK(fs.view("b") == std::string(512, 'b'));
+		}
+	});
+	run("a failed plain sync reads back what the drive holds", [] {
+		filesystem fs;
+		io d(fs);
+		auto f = d.create_exclusive("f");
+		d.sync_directory();
+		fs.set_flush_mode(ff::flush_mode::plain, ff::sync_platform::macos);
+		CHECK(f->write_at(0, std::string(512, 'a')) == 512);
+		f->sync();
+		CHECK(f->write_at(512, std::string(512, 'b')) == 512);
+		fs.add_fault({op::sync, 1, EIO});
+		CHECK_ERRNO(f->sync(), EIO);
+		CHECK(fs.view("f") == std::string(512, 'a'));  // the unsynced write dropped, the pushed bytes kept
 	});
 	return faultlab_test::verdict();
 }

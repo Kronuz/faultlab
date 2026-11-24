@@ -31,6 +31,38 @@ what it touches, not the live inode count; a crash, a settled ordering point and
 everything, as they rebuild it. Built with `FAULTLAB_CHECK_COUNTS=1`, as faultfs_test is, every
 collection checks the counts against a full recount and each directory sync its durable names.
 
+## Plain and full syncs
+
+`set_flush_mode(mode, platform)` names the sync calls completion's PosixIO makes, so a sweep runs
+a consumer in either flush mode. Each sync site makes one call, and the call decides what the
+model keeps:
+
+| Platform | Mode | `File::sync` | `File::sync_data` | `sync_directory` | ordering point |
+|---|---|---|---|---|---|
+| macOS | full | F_FULLFSYNC | F_FULLFSYNC | F_FULLFSYNC | F_FULLFSYNC |
+| macOS | plain | fsync | fsync | fsync | F_BARRIERFSYNC |
+| Linux | either | fsync | fdatasync | fsync | fsync |
+| other | either | fsync | fsync | fsync | fsync |
+
+| Call | Process crash (`kill`) | Power cut (`crash`) |
+|---|---|---|
+| F_FULLFSYNC; fsync and fdatasync off macOS | kept | kept: the bytes or names become durable, with what the ordering points staged (a device flush) |
+| fsync on macOS | kept | may be dropped, as unsynced data: the bytes sit in the drive's cache |
+| F_BARRIERFSYNC | kept | orders only, as every ordering point does |
+
+The default is full on the host, so a user that never sets a mode sees the calls it always saw.
+An ordering point stages whatever its call, since the contract promises it only orders.
+
+A plain fsync on macOS pushes the file's synced bytes: they wait staged at the next ordering
+point's epoch (the file joins `strays_`), so that point orders them ahead of later changes, as a
+device-wide barrier orders everything the drive received before it. A file written again
+between its push and the point records its bytes at the point in `at_mark`, which `as_of`
+prefers at one epoch, so a crash cut at that point may keep the later write. A plain directory
+sync changes nothing. Nothing settles until a full sync flushes the device, which settles every
+push and every staged epoch; in plain mode on macOS the epochs and their staged copies
+accumulate until a crash. A failed plain sync drops the unsynced bytes and reads back what the
+drive holds, the last push.
+
 ## What `crash` draws, in order
 
 1. **Epochs.** One coin per ordering point, in order, until the first lost one: the epochs before
