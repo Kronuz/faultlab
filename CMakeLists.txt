@@ -6,10 +6,10 @@ project(faultlab LANGUAGES CXX)
 # log. Header-only. The Python half (python/faultlab) is stdlib only.
 include(FetchContent)
 # completion's io.h: the File and IO seam faultfs implements, with preallocate, advise,
-# map_shared and link (the faultlab seam, completion:d8b538c).
+# map_shared and link (the faultlab seam, completion:d8b538c or later).
 # A consumer that already defines completion (completion's own tests) keeps its own copy.
 if(NOT TARGET completion::completion)
-	FetchContent_Declare(completion GIT_REPOSITORY https://github.com/Kronuz/completion.git GIT_TAG d8b538c6778f0a1b969e42c8428995d1d29d4731)
+	FetchContent_Declare(completion GIT_REPOSITORY https://github.com/Kronuz/completion.git GIT_TAG 30615161bebf6adb8297a8a16b338cb1952ce692)
 	FetchContent_MakeAvailable(completion)
 endif()
 
@@ -30,16 +30,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	endforeach()
 	# sector_test checks the MemoryIO states recorded in test/fixtures/memory_io_states.txt.
 	target_compile_definitions(faultlab_sector_test PRIVATE FAULTLAB_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures")
-	# Off by default: the generator that records the fixture from journal's live MemoryIO. Only
-	# this option fetches journal (headers only: SOURCE_SUBDIR names no CMakeLists).
+	# Off by default: the generator that records the fixture from journal's live MemoryIO.
 	option(FAULTLAB_REGENERATE_MEMORY_IO "Build faultlab_memory_io_gen, which records memory_io_states.txt from journal" OFF)
 	if(FAULTLAB_REGENERATE_MEMORY_IO)
-		FetchContent_Declare(journal_src GIT_REPOSITORY https://github.com/Kronuz/journal.git GIT_TAG a412175fe437b59463bcaa97ebc75429643bdc65 SOURCE_SUBDIR faultlab-headers-only)
-		FetchContent_MakeAvailable(journal_src)
-		add_executable(faultlab_memory_io_gen test/fixtures/memory_io_gen.cc)
-		target_link_libraries(faultlab_memory_io_gen PRIVATE faultlab::faultlab)
-		target_include_directories(faultlab_memory_io_gen PRIVATE "${journal_src_SOURCE_DIR}/include")
-		target_compile_definitions(faultlab_memory_io_gen PRIVATE FAULTLAB_JOURNAL_COMMIT="a412175fe437b59463bcaa97ebc75429643bdc65")
+		include(test/fixtures/memory_io_gen.cmake)
 	endif()
 	file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.scratch")  # the tests' state
 	add_executable(faultlab_demo examples/demo.cc)
