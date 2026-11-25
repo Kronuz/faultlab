@@ -18,6 +18,8 @@ using names = std::vector<std::string>;
 
 namespace {
 
+constexpr j::PosixIOOptions full_flush{j::FlushMode::full};
+
 // A fresh private directory under the build's .scratch.
 fs::path fresh(const std::string& name) {
 	const fs::path dir = fs::path(".scratch") / ("recorder-" + std::to_string(::getpid())) / name;
@@ -51,7 +53,7 @@ int main() {
 	run("every mutating primitive is one event; the shadow matches the real directory", [] {
 		const auto dir = fresh("events");
 		auto shadow = ff::load(dir);
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir), shadow);
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir, full_flush), shadow);
 		auto f = rec.create_exclusive("tmp");
 		f->write_at(0, "published");
 		f->sync();
@@ -70,7 +72,7 @@ int main() {
 	run("a cut after an event recovers on faultfs and on disk", [] {
 		const auto dir = fresh("cut");
 		auto shadow = ff::load(dir);
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir), shadow);
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir, full_flush), shadow);
 		auto f = rec.create_exclusive("data");
 		f->write_at(0, std::string(1500, 'x'));
 		f->sync();
@@ -89,7 +91,7 @@ int main() {
 		state.crash(1, {.size = ff::size_pick::durable});
 		const auto out = fresh("cut-materialized");
 		ff::materialize(state, out);
-		j::PosixIO recovered(out);
+		j::PosixIO recovered(out, full_flush);
 		auto r = recovered.open_existing("data");
 		CHECK(r->size() == 1500);
 		auto back = ff::load(out);
@@ -98,7 +100,7 @@ int main() {
 	run("faults fail the real call before or after it", [] {
 		const auto dir = fresh("faults");
 		auto shadow = ff::load(dir);
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir), shadow);
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir, full_flush), shadow);
 		auto f = rec.create_exclusive("f");
 		rec.add_fault({ff::op::write, 1, ENOSPC});
 		CHECK_ERRNO(f->write_at(0, "lost"), ENOSPC);
@@ -113,7 +115,7 @@ int main() {
 	run("verify catches a raw write and a raw link", [] {
 		const auto dir = fresh("raw");
 		auto shadow = ff::load(dir);
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir), shadow);
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir, full_flush), shadow);
 		auto f = rec.create_exclusive("f");
 		f->write_at(0, "through the seam");
 		CHECK(verifies(rec, dir));
@@ -131,7 +133,7 @@ int main() {
 	run("a mapped file verifies by length only", [] {
 		const auto dir = fresh("mapped");
 		auto shadow = ff::load(dir);
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir), shadow);
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir, full_flush), shadow);
 		auto f = rec.create_exclusive("change");
 		f->truncate(4096);
 		auto m = f->map_shared(4096);
@@ -155,7 +157,7 @@ int main() {
 		CHECK(shadow.view("sub/b") == "beta");
 		shadow.crash(0);  // durable
 		CHECK(shadow.view("a") == "alpha");
-		ff::recorder rec(std::make_shared<j::PosixIO>(dir / "sub"), shadow, "sub");
+		ff::recorder rec(std::make_shared<j::PosixIO>(dir / "sub", full_flush), shadow, "sub");
 		CHECK(verifies(rec, dir / "sub"));
 	});
 	fs::remove_all(fs::path(".scratch") / ("recorder-" + std::to_string(::getpid())));
